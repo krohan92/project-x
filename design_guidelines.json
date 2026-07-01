@@ -1,0 +1,159 @@
+{
+  "app_name": "Aura Postpartum",
+  "personality": "8 Hand-Drawn / Journal",
+  "personality_one_liner": "A warm, nurturing, and emotionally safe journal-like companion for postpartum mothers, focusing on empathy and calm.",
+  "color": {
+    "surface": "#FDFBF7",
+    "onSurface": "#2C2925",
+    "surfaceSecondary": "#F4EFE6",
+    "onSurfaceSecondary": "#3A3631",
+    "surfaceTertiary": "#EAE3D6",
+    "onSurfaceTertiary": "#4F4A44",
+    "surfaceInverse": "#2C2925",
+    "onSurfaceInverse": "#FDFBF7",
+    "brand": "#D68C7A",
+    "brandPrimary": "#D68C7A",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#98A99B",
+    "onBrandSecondary": "#1A2421",
+    "brandTertiary": "#E2C8B5",
+    "onBrandTertiary": "#44352D",
+    "success": "#8A9A5B",
+    "onSuccess": "#FFFFFF",
+    "warning": "#DEB068",
+    "onWarning": "#3A2A12",
+    "error": "#CC7373",
+    "onError": "#FFFFFF",
+    "info": "#8CA8B0",
+    "onInfo": "#FFFFFF",
+    "border": "#EAE3D6",
+    "borderStrong": "#D5C8B2",
+    "divider": "#EAE3D6"
+  },
+  "typography": {
+    "displayFontFamily": "Fraunces",
+    "textFontFamily": "Quicksand",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous journaling rhythm. Whitespace acts as a restorative element. Do not cramp content. Use xl and 2xl for section spacing.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 0,
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [
+      "Use solid surfaceSecondary or surfaceTertiary instead of glass to maintain the paper/tactile journal aesthetic.",
+      "Use soft gradients and tinted backgrounds for elevation rather than blur."
+    ],
+    "dont's": [
+      "Do not use heavy glassmorphism or blur, it clashes with the organic hand-drawn personality."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Onboarding",
+      "purpose": "A gentle, warm welcome gathering minimal info without feeling like a clinical form.",
+      "states": {
+        "loading": "Soft fading brand-tinted shape.",
+        "empty": "N/A",
+        "error": "Gentle error message with a retry button."
+      },
+      "layout": "Full-bleed soft watercolor background with a gradient scrim. Large Fraunces greeting 'Welcome, Mama'. Use single card selections per step. Avoid large walls of form inputs. Use a slider or emoji-like scale for the initial mood check."
+    },
+    {
+      "name": "Home / Feed",
+      "purpose": "A calming daily dashboard featuring a daily quote, mood check-in, and curated supportive content.",
+      "states": {
+        "loading": "Centered soft spinner.",
+        "empty": "Illustration of a blooming flower, text 'A quiet day. Take a deep breath.'",
+        "error": "Gentle text 'We lost connection. Take a moment for yourself while we try again.' + Retry."
+      },
+      "layout": "Header contains the Date and 'Breathe' floating button. Top widget: Hero card with Daily Quote over a warm watercolor background (must use gradient scrim for readability). Below hero: 'Mood Pulse' circular widget or cards for daily check-in. Vertical scroll of mixed content cards (Mindfulness audio, short tips, community highlights) spaced generously."
+    },
+    {
+      "name": "AI Companion Chat (Talk)",
+      "purpose": "An empathetic, 24x7 judgment-free zone for the mother to vent, ask questions, and get support.",
+      "states": {
+        "loading": "Soft typing indicator bubbles.",
+        "empty": "Soft clay-textured background with suggested prompt chips like 'I feel overwhelmed' or 'I just need to vent'.",
+        "error": "Message 'I am having trouble hearing you right now. Please try again.'"
+      },
+      "layout": "Not a standard chat app. Background is surfaceSecondary. Chat bubbles have large radii (pill-like or soft asymmetrical corners). AI messages are pale sage (brandSecondary with low opacity) or warm clay. User messages are surface. Input field contains quick-action suggestion chips above it. Always show a persistent but soft 'Help / Resources' icon in the header for escalation."
+    },
+    {
+      "name": "EPDS & History",
+      "purpose": "Track mood trends and conduct EPDS screening safely and supportively.",
+      "states": {
+        "loading": "Centered spinner.",
+        "empty": "Illustration of an empty journal page. 'Log your first mood to begin.'",
+        "error": "Gentle text 'Unable to load history.' + Retry."
+      },
+      "layout": "Journal-like list of past moods with soft watercolor dots. EPDS screener is presented as a gentle 'Check-in questionnaire', one question at a time. The result is informational, providing soft reassurance and resource cards (e.g., Lactation, Breast Pump, Helplines) rather than a clinical diagnosis."
+    }
+  ],
+  "images": {
+    "onboarding_bg": {
+      "url": "https://images.unsplash.com/photo-1772984711142-af64d57dcba4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwzfHxzb2Z0JTIwd2F0ZXJjb2xvciUyMGFic3RyYWN0JTIwYmFja2dyb3VuZCUyMHdhcm0lMjBzdW5saWdodHxlbnwwfHx8fDE3ODI4NzI5OTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Soft watercolor washes in orange and pink hues"
+    },
+    "hero_quote_bg": {
+      "url": "https://images.unsplash.com/photo-1772984711070-5c7e0d54026b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwyfHxzb2Z0JTIwd2F0ZXJjb2xvciUyMGFic3RyYWN0JTIwYmFja2dyb3VuZCUyMHdhcm0lMjBzdW5saWdodHxlbnwwfHx8fDE3ODI4NzI5OTh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract watercolor painting with orange and yellow hues"
+    },
+    "chat_empty_bg": {
+      "url": "https://images.unsplash.com/photo-1547148903-55829acc03a5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxnZW50bGUlMjBuYXR1cmUlMjBzb2Z0JTIwY2xheSUyMHRleHR1cmVzfGVufDB8fHx8MTc4Mjg3Mjk5OHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Soft warm organic textile or clay texture"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Tone is critical: use soft, empathetic microcopy everywhere. Instead of 'Error', say 'We had a little trouble'. Instead of 'Submit Form', say 'Save Journal'.",
+    "Font weights MUST be capped at 500. Let the Fraunces display font size dictate hierarchy, do not use bold or heavy weights.",
+    "Implement the gradient-to-dark scrim pattern (top-to-bottom transparent to surfaceInverse) strictly on the Daily Quote hero card and Onboarding backgrounds.",
+    "Do NOT use any blues or purples. Stick to the warm oat, terracotta, and sage palette.",
+    "AI Chat UI should feel like a journal or safe space, not a robotic or clinical interface. Avoid default standard chat UI. Use suggested prompt chips for ease of use.",
+    "Ensure the touch targets are minimum 44x44pt. Mothers might be holding a baby and navigating one-handed.",
+    "Do not use glassmorphism. This app uses the 'Hand-Drawn / Journal' personality, which relies on solid, paper-like surfaces and color blocking.",
+    "Borders should be used subtly to define cards without casting shadows, preserving the tactile feel.",
+    "EPDS flow must have a clear safety escalation path (e.g., Helplines) visible to the user.",
+    "Include subtle haptics on mood selections and important buttons to provide gentle physical feedback."
+  ],
+  "haptics": {
+    "mood_selection": "light",
+    "primary_button": "medium",
+    "tab_switch": "selection",
+    "chat_send": "light"
+  }
+}
