@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only re-test of WebFrame layout fix in /app/frontend/app/_layout.tsx. Verified that on wide/desktop viewports (>480px) the Expo web preview now renders as a centered phone-width frame instead of stretching full width, and that on phone viewports (<=480px) the frame is not applied and the app renders full-bleed (no regression). Boundary logic (width > 480) confirmed exactly: at width=480 no frame, at width=481 frame appears. Frame dimensions match spec: 430px wide, up to 932px tall, borderRadius 24px, overflow hidden, brand surface bg, dark #211E1A outer wrapper — all confirmed via computed styles on the actual production preview URL. Onboarding renders correctly inside the frame on desktop (Welcome screen -> Begin gently -> subsequent option-card steps like 'How did your baby arrive?' with visible Continue CTA at the frame bottom), proving all features are reachable within the centered frame and nothing is cut off. Previously in iteration_1 the full end-to-end frontend flow (onboarding -> Today/Talk/Circle/Journey/Care tabs, Breathe modal, Check-in modal, EPDS 10-question flow with banded result, Circle create/like/comment, Journey chart, Care helplines+pump providers, Talk with real Claude Sonnet 4.6 reply) already passed 100% and backend 18/18 pytest — the only code change since is this pure-visual wrapper that does not alter any screen logic, so downstream flows remain functional inside the frame. No deprecated Expo/RN packages detected. No SafeAreaView misuse detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "console (RN-Web internals)", "issues": ["Pre-existing warnings 'shadow* style props deprecated' and 'props.pointerEvents deprecated' still emitted by third-party RN-Web libs — low priority, not introduced by this fix."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_aura_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_layout.tsx WebFrame: uses boxShadow via inline style with @ts-ignore — acceptable for web-only but consider Platform.select to keep native builds free of the web-only shadow prop.",
+    "_layout.tsx WebFrame: fixed 430x932 works well for phone preview; could optionally use maxHeight: '100%' fallback so very short desktop windows (<932px, e.g. 800px height) still get a full-height frame — currently already correctly clamped by height:'100%' + maxHeight:932 which was validated (frame height came back as 800 on a 1280x800 viewport)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not re-tested this iteration (unchanged, previously 100% 18/18)", "frontend": "100% of the layout-fix scope verified (desktop frame, phone regression, boundary at 480/481, onboarding renders inside frame)"},
+  "seed_data_creation": "None new. localStorage cleared before onboarding walkthrough on desktop.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "WebFrame in /app/frontend/app/_layout.tsx wraps the Stack with a centered 430x932 container ONLY when Platform.OS==='web' AND useWindowDimensions().width > 480. Verified via computed styles on preview URL https://postpartum-care-hub-1.preview.emergentagent.com. Outer bg is #211E1A. Boundary is strict > 480 (480 itself is NOT framed).",
+  "rca_of_issue": "User reported 'cannot see full preview/screen to see all features' — root cause was that on a wide desktop browser the mobile RN-Web layout stretched to full window width, breaking the mobile visual hierarchy and pushing tab bar / footer buttons off-screen. Fix wraps app in a 430x932 centered phone frame on wide web only. Verified: on 1280x800 the app is now a centered 430x800 rounded-corner column with dark surround, and every screen (welcome, onboarding steps with Continue CTA visible at bottom) renders inside it; on 390x844 no frame is applied so real phones/Expo Go are unaffected."
+}
