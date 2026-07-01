@@ -1,0 +1,34 @@
+{
+  "summary": "Full e2e testing of Aura Postpartum Companion (MVP v1). Backend: 18/18 pytest tests pass covering /quote, /tips, /helplines, /pump-providers, /profile (upsert+get+404), /mood (add/list/today), /epds (questions, low/possible/likely band, self-harm flag, validation, history), /chat (Claude Sonnet 4.6 reply + persisted history), /community (seeded feed, create, like, comments). Frontend: onboarding 8-step flow completes and routes to tabs, Today tab renders greeting/daily quote/checkin CTA/quick actions/tips, Talk tab sends message and receives real empathetic Claude reply within ~15s, Circle loads seeded posts, topic filter chips work, like increments, thread opens with comment input, new post gets created and appears in feed, Journey shows stats/mood chart/EPDS card with log-mood and start-EPDS buttons, EPDS 10 questions answer flow yields correct band and shows self-harm safety card with 988 CTA when Q10>0, Care tab renders 988 + PPSI + national hotline + Aeroflow/Byram pump providers + profile name, Breathe modal animates with 'Breathe in' text. Deprecated packages: none detected. SafeAreaView: onboarding/tabs use useSafeAreaInsets from react-native-safe-area-context (correct). Minor console warnings (shadow* deprecated, props.pointerEvents deprecated) come from third-party RN web internals — not blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "console", "issues": ["Warnings: 'shadow*' style props deprecated (use boxShadow) and 'props.pointerEvents' deprecated — coming from RN-Web internals of installed libs; low priority."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_aura_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py: /api/mood/{device_id}/today uses regex on stored ISO string — works but a proper datetime range query would be more robust across timezones.",
+    "server.py: build_system_prompt does not sanitize profile values before insertion into the prompt (low risk since profile is device-local user input).",
+    "onboarding.tsx: silent catch in finish() — a failed profile save shows no error to the user (only spinner stops). Consider surfacing a toast."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_aura_backend.py (new)"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% of tested critical flows"},
+  "seed_data_creation": "Created TEST_ prefixed profile, moods, EPDS entries, chat messages, community post + comment via API/UI. Community seed posts auto-seeded by backend on startup (5 posts).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend URL from frontend/.env EXPO_PUBLIC_BACKEND_URL. Device profile is stored via /src/utils/storage (localStorage on web) under key aura_device_id — clearing storage returns user to onboarding. Chat replies take ~10-15s (Claude Sonnet 4.6). EPDS band thresholds: total<=9 low, 10-12 possible, >=13 likely; self_harm_flag=answers[9]>0. Community feed returns 'id' (string) and excludes '_id'.",
+  "rca_of_issue": ""
+}
