@@ -20,8 +20,7 @@ import { Txt, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
-
-const TOPICS = ["All", "Sleep", "Feeding", "Mental health", "Recovery", "Support", "General"];
+import { useT } from "@/src/lib/i18n";
 
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -37,33 +36,66 @@ export default function Community() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile, deviceId } = useProfile();
+  const { t } = useT();
 
   const [posts, setPosts] = useState<any[]>([]);
-  const [topic, setTopic] = useState("All");
+  const [space, setSpace] = useState("general");
+  const [allSpaces, setAllSpaces] = useState<any[]>([]);
+  const [joined, setJoined] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [newText, setNewText] = useState("");
-  const [newTopic, setNewTopic] = useState("General");
   const [posting, setPosting] = useState(false);
   const [liked, setLiked] = useState<Record<string, boolean>>({});
 
-  const load = useCallback(async () => {
+  const loadPosts = useCallback(async (sp: string) => {
     try {
       const p = await api.community();
-      setPosts(p);
+      const list = sp === "general" ? p.filter((x: any) => (x.space || "general") === "general") : p.filter((x: any) => x.space === sp);
+      setPosts(list);
     } catch {}
   }, []);
 
+  const loadSpaces = useCallback(async () => {
+    if (!deviceId) return;
+    try {
+      const res = await api.spaces(deviceId);
+      setAllSpaces(res.spaces || []);
+      setJoined(res.joined || []);
+    } catch {}
+  }, [deviceId]);
+
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      loadSpaces();
+      loadPosts(space);
+    }, [loadSpaces, loadPosts, space])
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await load();
+    await Promise.all([loadSpaces(), loadPosts(space)]);
     setRefreshing(false);
+  };
+
+  const selectSpace = (sp: string) => {
+    Haptics.selectionAsync();
+    setSpace(sp);
+    loadPosts(sp);
+  };
+
+  const toggleJoin = async (key: string) => {
+    if (!deviceId) return;
+    Haptics.selectionAsync();
+    if (joined.includes(key)) {
+      setJoined((j) => j.filter((x) => x !== key));
+      await api.leaveSpace({ device_id: deviceId, space: key });
+      if (space === key) selectSpace("general");
+    } else {
+      setJoined((j) => [...j, key]);
+      await api.joinSpace({ device_id: deviceId, space: key });
+    }
   };
 
   const like = async (id: string) => {
@@ -71,9 +103,7 @@ export default function Community() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setLiked((l) => ({ ...l, [id]: true }));
     setPosts((ps) => ps.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)));
-    try {
-      await api.likePost(id);
-    } catch {}
+    try { await api.likePost(id); } catch {}
   };
 
   const submitPost = async () => {
@@ -84,80 +114,77 @@ export default function Community() {
         device_id: deviceId,
         author: profile?.name || "Anonymous mama",
         text: newText.trim(),
-        topic: newTopic,
+        topic: "General",
+        space,
       });
       setNewText("");
-      setNewTopic("General");
       setComposeOpen(false);
-      await load();
+      await loadPosts(space);
     } catch {}
     setPosting(false);
   };
 
-  const filtered = topic === "All" ? posts : posts.filter((p) => p.topic === topic);
+  const joinedSpaces = allSpaces.filter((s) => joined.includes(s.key));
+  const currentLabel =
+    space === "general" ? t("circle.general") : allSpaces.find((s) => s.key === space)?.label || space;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      {/* Sticky header + chips */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View style={styles.headerRow}>
           <View>
-            <Txt display style={styles.title}>The Circle</Txt>
-            <Txt style={{ color: colors.muted }}>Moms near you, in it together</Txt>
+            <Txt display style={styles.title}>{t("tab.circle")}</Txt>
+            <Txt style={{ color: colors.muted }}>Moms in it together</Txt>
           </View>
-          <View style={styles.nearbyPill}>
-            <Feather name="map-pin" size={13} color={colors.onBrandSecondary} />
-            <Txt style={{ color: colors.onBrandSecondary, fontSize: fontSize.sm }}>Nearby</Txt>
-          </View>
+          <Pressable testID="manage-spaces-button" onPress={() => setManageOpen(true)} style={styles.spacesBtn}>
+            <Feather name="globe" size={14} color={colors.onBrandSecondary} />
+            <Txt style={{ color: colors.onBrandSecondary, fontSize: fontSize.sm }}>{t("circle.spaces")}</Txt>
+          </Pressable>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipsRow}
-        >
-          {TOPICS.map((t) => (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+          <Pressable
+            testID="space-general"
+            onPress={() => selectSpace("general")}
+            style={[styles.chip, space === "general" && styles.chipActive]}
+          >
+            <Txt style={{ color: space === "general" ? colors.onBrandPrimary : colors.onSurfaceSecondary }} weight={space === "general" ? "500" : "400"}>
+              {t("circle.general")}
+            </Txt>
+          </Pressable>
+          {joinedSpaces.map((s) => (
             <Pressable
-              key={t}
-              testID={`topic-${t}`}
-              onPress={() => {
-                Haptics.selectionAsync();
-                setTopic(t);
-              }}
-              style={[styles.chip, topic === t && styles.chipActive]}
+              key={s.key}
+              testID={`space-${s.key}`}
+              onPress={() => selectSpace(s.key)}
+              style={[styles.chip, space === s.key && styles.chipActive]}
             >
-              <Txt
-                style={{ color: topic === t ? colors.onBrandPrimary : colors.onSurfaceSecondary }}
-                weight={topic === t ? "500" : "400"}
-              >
-                {t}
+              <Txt style={{ color: space === s.key ? colors.onBrandPrimary : colors.onSurfaceSecondary }} weight={space === s.key ? "500" : "400"}>
+                {s.label}
               </Txt>
             </Pressable>
           ))}
+          <Pressable testID="add-space-chip" onPress={() => setManageOpen(true)} style={[styles.chip, styles.chipGhost]}>
+            <Feather name="plus" size={16} color={colors.brand} />
+          </Pressable>
         </ScrollView>
       </View>
 
       <FlatList
-        data={filtered}
+        data={posts}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }}
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Feather name="users" size={40} color={colors.borderStrong} />
-            <Txt style={{ color: colors.muted, marginTop: spacing.md }}>
-              No posts here yet. Be the first to share.
+            <Feather name="feather" size={40} color={colors.borderStrong} />
+            <Txt style={{ color: colors.muted, marginTop: spacing.md, textAlign: "center" }}>
+              No posts in {currentLabel} yet. Be the first to share.
             </Txt>
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable
-            testID={`post-${item.id}`}
-            onPress={() => router.push(`/thread/${item.id}`)}
-            style={styles.postCard}
-          >
+          <Pressable testID={`post-${item.id}`} onPress={() => router.push(`/thread/${item.id}`)} style={styles.postCard}>
             <View style={styles.postHead}>
               <View style={[styles.postAvatar, { backgroundColor: item.avatar_color }]}>
                 <Txt style={{ color: "#fff", fontSize: fontSize.lg }} weight="500">
@@ -176,17 +203,8 @@ export default function Community() {
             </View>
             <Txt style={styles.postText}>{item.text}</Txt>
             <View style={styles.postActions}>
-              <Pressable
-                testID={`like-${item.id}`}
-                onPress={() => like(item.id)}
-                style={styles.action}
-                hitSlop={8}
-              >
-                <Feather
-                  name="heart"
-                  size={18}
-                  color={liked[item.id] ? colors.brand : colors.muted}
-                />
+              <Pressable testID={`like-${item.id}`} onPress={() => like(item.id)} style={styles.action} hitSlop={8}>
+                <Feather name="heart" size={18} color={liked[item.id] ? colors.brand : colors.muted} />
                 <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{item.likes}</Txt>
               </Pressable>
               <View style={styles.action}>
@@ -198,40 +216,21 @@ export default function Community() {
         )}
       />
 
-      <Pressable
-        testID="new-post-button"
-        onPress={() => setComposeOpen(true)}
-        style={[styles.fab, { bottom: insets.bottom + spacing.lg }]}
-      >
+      <Pressable testID="new-post-button" onPress={() => setComposeOpen(true)} style={[styles.fab, { bottom: insets.bottom + spacing.lg }]}>
         <Feather name="edit-3" size={24} color={colors.onBrandPrimary} />
       </Pressable>
 
-      {/* Compose modal */}
+      {/* Compose */}
       <Modal visible={composeOpen} animationType="slide" transparent onRequestClose={() => setComposeOpen(false)}>
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + spacing.lg }]}>
             <View style={styles.modalHandle} />
             <View style={styles.modalHead}>
-              <Txt display style={{ fontSize: fontSize.xl }}>Share with the Circle</Txt>
+              <Txt display style={{ fontSize: fontSize.xl }}>Post in {currentLabel}</Txt>
               <Pressable testID="close-compose" onPress={() => setComposeOpen(false)} hitSlop={10}>
                 <Feather name="x" size={22} color={colors.onSurface} />
               </Pressable>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.sm }}>
-              {TOPICS.filter((t) => t !== "All").map((t) => (
-                <Pressable
-                  key={t}
-                  testID={`newtopic-${t}`}
-                  onPress={() => setNewTopic(t)}
-                  style={[styles.chip, newTopic === t && styles.chipActive, { flexShrink: 0 }]}
-                >
-                  <Txt style={{ color: newTopic === t ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>{t}</Txt>
-                </Pressable>
-              ))}
-            </ScrollView>
             <TextInput
               testID="post-input"
               value={newText}
@@ -244,6 +243,43 @@ export default function Community() {
             <Button testID="submit-post" label="Share" onPress={submitPost} loading={posting} disabled={!newText.trim()} />
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Manage spaces */}
+      <Modal visible={manageOpen} animationType="slide" transparent onRequestClose={() => setManageOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + spacing.lg }]}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHead}>
+              <Txt display style={{ fontSize: fontSize.xl }}>{t("circle.manageSpaces")}</Txt>
+              <Pressable testID="close-manage" onPress={() => setManageOpen(false)} hitSlop={10}>
+                <Feather name="x" size={22} color={colors.onSurface} />
+              </Pressable>
+            </View>
+            <Txt style={{ color: colors.muted, marginBottom: spacing.md, lineHeight: 20 }}>
+              {"Opt in to cultural communities. You're never added automatically."}
+            </Txt>
+            {allSpaces.map((s) => {
+              const isJoined = joined.includes(s.key);
+              return (
+                <View key={s.key} style={styles.spaceRow}>
+                  <View style={{ flex: 1 }}>
+                    <Txt weight="500" style={{ fontSize: fontSize.lg }}>{s.label}</Txt>
+                  </View>
+                  <Pressable
+                    testID={`join-${s.key}`}
+                    onPress={() => toggleJoin(s.key)}
+                    style={[styles.joinBtn, isJoined && styles.joinedBtn]}
+                  >
+                    <Txt style={{ color: isJoined ? colors.onSurfaceTertiary : colors.onBrandPrimary }} weight="500">
+                      {isJoined ? t("common.leave") : t("common.join")}
+                    </Txt>
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -263,10 +299,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   title: { fontSize: fontSize["2xl"] },
-  nearbyPill: {
+  spacesBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     backgroundColor: colors.brandSecondary,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
@@ -285,6 +321,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipGhost: { borderStyle: "dashed", borderColor: colors.brand, paddingHorizontal: spacing.md },
   empty: { alignItems: "center", paddingTop: spacing["3xl"] },
   postCard: {
     backgroundColor: colors.surfaceSecondary,
@@ -308,12 +345,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radius.pill,
   },
-  postText: {
-    fontSize: fontSize.lg,
-    lineHeight: 24,
-    color: colors.onSurfaceSecondary,
-    marginTop: spacing.md,
-  },
+  postText: { fontSize: fontSize.lg, lineHeight: 24, color: colors.onSurfaceSecondary, marginTop: spacing.md },
   postActions: { flexDirection: "row", gap: spacing.xl, marginTop: spacing.md },
   action: { flexDirection: "row", alignItems: "center", gap: 6 },
   fab: {
@@ -363,4 +395,18 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     marginBottom: spacing.lg,
   },
+  spaceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  joinBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandPrimary,
+  },
+  joinedBtn: { backgroundColor: colors.surfaceTertiary },
 });

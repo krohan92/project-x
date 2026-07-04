@@ -1,0 +1,36 @@
+{
+  "summary": "Full backend + frontend verification of Beacon feature layered on Aura. Backend: created /app/backend/tests/test_beacon_backend.py with 15 focused tests covering meta, PATCH settings (partial + language + cultural fields), DELETE ethnicity (verifies ethnicity gone + matching_preference=none + display_tags=false via GET /api/profile), presence jitter privacy (raw coords never persisted, anchor within ~10mi of input, and !=raw), /presence/active returns mock peers anchored near jittered location, smart matching order (pref='similar' + tag 'South Asian / Indian' returns outcome=matched-on-preference with same-tag peer), tag-hiding rule (peer_tag null unless BOTH display_tags true — verified both ways), pref='none' returns fallback, /match/analytics increments correctly, /peerchat get+post persists user msg and produces demo peer reply, /baby-log CRUD (feed/sleep/diaper) newest-first, /spaces GET/join/leave, /community space filter (south_asian post not visible under latina space), /guides featured_variant populated only for matching culture and null otherwise. Result: 15/15 PASS in 2.54s. Frontend (Expo web preview at https://postpartum-care-hub-1.preview.emergentagent.com, 390x844 mobile viewport): seeded a profile via API + set localStorage aura_device_id (JSON.stringified) to bypass onboarding. Verified 5 bottom tabs present (Today/Beacon/Track/Circle/Care). Beacon tab renders real OpenStreetMap via Leaflet with tiles + 9+ marker pins over New York area, headline '9 moms awake nearby', privacy note 'Locations are randomized by up to 10 miles', matching preference row shows current pref, and the beacon-toggle + find-peer-button + beacon-settings-button all exist. Tapping Find someone to talk to navigated to /peer/<uuid>?handle=NightLotus&outcome=matched-on-preference&tag= (tag intentionally blank when peer.display_tags=false), the peer chat screen showed the opening peer message ('Hi, I'm here with you. Couldn't sleep either — want to talk?'), header showed 'Matched on your shared background', sending 'TEST_hello_peer' persisted and a canned peer reply ('I hear you. The nights are so long, aren't they?...') appeared via polling. Beacon Settings modal: language switching EN→ES→HI updates strings live (Spanish 'Idioma/Preferencia' and Hindi Devanagari script both detected in DOM), peer matching preference and cultural background chips persist, 'Remove my cultural data' clears ethnicity and sets matching_preference=none + display_tags=false (confirmed via GET /api/profile). Care tab guides section renders; Circle tab manage-spaces + join-south_asian executed (chip verification partially blocked because Beacon Settings modal remained open in the sequential run — see context_for_next_agent). Baby-log Track quick-log buttons found and clicked, backend logs recorded via API. Privacy behaviors and matching order are correct per spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "console (RN-Web internals)", "issues": ["Pre-existing 'shadow* style props deprecated' warnings from RN-Web libs. Not introduced by Beacon."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_beacon_backend.py",
+    "/app/backend/tests/test_aura_backend.py",
+    "/app/test_reports/pytest/pytest_beacon.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py: /presence/toggle correctly stores ONLY jittered coords; raw lat/lng never persist. Good.",
+    "server.py:_select_peer: matching order matches spec (similar+tag > diverse > fallback). Peer 'allow_cultural_match' honored on the peer side too. Analytics event is anonymized (no device_id).",
+    "server.py peer_tag reveal: `both_display = display_tags && peer.display_tags` — correct AND both-sides opt-in check.",
+    "server.py /community filter 'general' matches null-space legacy posts via {'space': {'$in': ['general', None]}} — good backward-compat.",
+    "server.py /guides: returns featured_variant only when a variant matches the requested culture (null otherwise) — matches spec.",
+    "Frontend Beacon: settings modal is a full-screen presentation; when tests navigate to another tab while it's open, the underlying tab bar is not tappable. Not a bug, just a testing note. Consider closing the modal on tab press if reachable via deep-link edge cases."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_beacon_backend.py (new)",
+    "/app/test_reports/iteration_3.json (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15 new Beacon + 18/18 previous Aura)", "frontend": "~90% — all Beacon flows verified end-to-end (map, matching, peer chat with polling reply, language switch EN/ES/HI, cultural data delete); Track/Circle/Care were reachable and testIDs render, some clicks in the sequential script were blocked by a lingering settings modal but individually confirmed."},
+  "seed_data_creation": "Seeded a test profile via POST /api/profile with device_id=TEST_ui_<uuid>, opted into South Asian / Indian + matching_preference=similar + display_tags=true; localStorage aura_device_id set with JSON.stringify to bypass onboarding.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "IMPORTANT for Playwright: storage.setItem in src/utils/storage.ts JSON.stringifies values, so to inject aura_device_id from tests use JSON.stringify('<id>') as the localStorage value — otherwise JSON.parse throws and profile-context falls back to onboarding. Beacon Settings is a full-screen route (/beacon-settings), not a modal-over-tabs; always call router.back() (close-settings testID) before tapping a bottom tab. Backend URL: https://postpartum-care-hub-1.preview.emergentagent.com. Mock peers hardcoded in server.py MOCK_PEERS drive the map + matching (this is intentional per spec).",
+  "rca_of_issue": "N/A — no bugs found. All privacy behaviors (jitter, tag-hiding when not both opt-in) and matching order (similar-with-tag → fallback) verified. Analytics events created and reflected in /api/match/analytics. Peer chat polling produces canned demo replies as designed."
+}

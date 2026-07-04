@@ -87,4 +87,35 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // ----- Beacon -----
+  beaconMeta: () => req(`/beacon/meta`),
+  updateBeaconSettings: (body: any) =>
+    req(`/beacon/settings`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteEthnicity: (deviceId: string) =>
+    req(`/beacon/ethnicity/${deviceId}`, { method: "DELETE" }),
+
+  presenceToggle: (body: any) =>
+    req(`/presence/toggle`, { method: "POST", body: JSON.stringify(body) }),
+  presenceActive: (deviceId: string) => req(`/presence/active?device_id=${deviceId}`),
+
+  matchRequest: (deviceId: string) =>
+    req(`/match/request`, { method: "POST", body: JSON.stringify({ device_id: deviceId }) }),
+
+  peerChat: (roomId: string) => req(`/peerchat/${roomId}`),
+  peerSend: (roomId: string, body: any) =>
+    req(`/peerchat/${roomId}`, { method: "POST", body: JSON.stringify(body) }),
+
+  babyLog: (body: any) =>
+    req(`/baby-log`, { method: "POST", body: JSON.stringify(body) }),
+  babyLogs: (deviceId: string) => req(`/baby-log/${deviceId}`),
+
+  spaces: (deviceId: string) => req(`/spaces/${deviceId}`),
+  joinSpace: (body: any) =>
+    req(`/spaces/join`, { method: "POST", body: JSON.stringify(body) }),
+  leaveSpace: (body: any) =>
+    req(`/spaces/leave`, { method: "POST", body: JSON.stringify(body) }),
+
+  guides: (culture?: string) =>
+    req(`/guides${culture ? `?culture=${encodeURIComponent(culture)}` : ""}`),
 };

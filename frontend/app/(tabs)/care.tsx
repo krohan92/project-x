@@ -8,18 +8,29 @@ import { Txt, Card } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { useT } from "@/src/lib/i18n";
 
 export default function Care() {
   const insets = useSafeAreaInsets();
   const { profile } = useProfile();
+  const { t } = useT();
 
   const [helplines, setHelplines] = useState<any[]>([]);
   const [pumps, setPumps] = useState<any[]>([]);
+  const [guides, setGuides] = useState<any[]>([]);
+
+  // Cultural variants surface first ONLY if the user opted into cultural matching
+  // and has a saved background.
+  const culture =
+    profile?.matching_preference === "similar" && profile?.ethnicity
+      ? profile.ethnicity
+      : undefined;
 
   useEffect(() => {
     api.helplines().then(setHelplines).catch(() => {});
     api.pumpProviders().then(setPumps).catch(() => {});
-  }, []);
+    api.guides(culture).then(setGuides).catch(() => {});
+  }, [culture]);
 
   const call = (detail: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -78,6 +89,39 @@ export default function Care() {
               </View>
             </Card>
           </Pressable>
+        ))}
+
+        {/* Guides & Resources (culturally-aware) */}
+        <Txt display style={styles.sectionTitle}>{t("care.guides")}</Txt>
+        {culture && (
+          <View style={styles.culturalNote}>
+            <Feather name="globe" size={14} color={colors.onBrandTertiary} />
+            <Txt style={{ color: colors.onBrandTertiary, fontSize: fontSize.sm, flex: 1 }}>
+              {t("care.culturalFirst")}
+            </Txt>
+          </View>
+        )}
+        {guides.map((g) => (
+          <Card key={g.id} style={styles.guideCard} testID={`guide-${g.id}`}>
+            <Txt style={styles.guideTopic}>{g.topic.toUpperCase()}</Txt>
+            {g.featured_variant ? (
+              <>
+                <View style={styles.variantTag}>
+                  <Feather name="star" size={12} color={colors.onBrandTertiary} />
+                  <Txt style={{ color: colors.onBrandTertiary, fontSize: 11 }}>{g.featured_variant.culture}</Txt>
+                </View>
+                <Txt display style={styles.guideTitle}>{g.featured_variant.title}</Txt>
+                <Txt style={styles.guideBody}>{g.featured_variant.body}</Txt>
+                <Txt style={styles.guideMore}>{g.title}</Txt>
+                <Txt style={styles.guideBodyMuted}>{g.body}</Txt>
+              </>
+            ) : (
+              <>
+                <Txt display style={styles.guideTitle}>{g.title}</Txt>
+                <Txt style={styles.guideBody}>{g.body}</Txt>
+              </>
+            )}
+          </Card>
         ))}
 
         {/* Breast pumps */}
@@ -201,4 +245,30 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     borderRadius: radius.md,
   },
+  culturalNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.brandTertiary + "50",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  guideCard: { marginBottom: spacing.md },
+  guideTopic: { color: colors.muted, fontSize: 10, letterSpacing: 1.5, marginBottom: spacing.sm },
+  variantTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: colors.brandTertiary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    marginBottom: spacing.sm,
+  },
+  guideTitle: { fontSize: fontSize.lg, marginBottom: 4 },
+  guideBody: { color: colors.onSurfaceTertiary, lineHeight: 22 },
+  guideMore: { fontSize: fontSize.base, marginTop: spacing.md, color: colors.onSurfaceSecondary },
+  guideBodyMuted: { color: colors.muted, lineHeight: 20, marginTop: 2, fontSize: fontSize.sm },
 });

@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field, BeforeValidator
 from typing import List, Optional, Annotated, Any
 from bson import ObjectId
 import uuid
-from datetime import datetime, timezone, date
+import random
+import math
+from datetime import datetime, timezone, date, timedelta
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
@@ -120,6 +122,7 @@ class PostCreate(BaseModel):
     author: str
     text: str
     topic: str = "General"
+    space: str = "general"
 
 
 class CommentCreate(BaseModel):
@@ -436,12 +439,14 @@ async def chat(req: ChatRequest):
 
 # ----- Community -----
 @api_router.get("/community")
-async def community_feed():
-    docs = await db.community_posts.find({}).sort("created_at", -1).to_list(100)
+async def community_feed(space: str = "general"):
+    query = {} if space == "all" else {"space": {"$in": [space, None]}} if space == "general" else {"space": space}
+    docs = await db.community_posts.find(query).sort("created_at", -1).to_list(100)
     out = []
     for d in docs:
         d["id"] = str(d["_id"])
         d.pop("_id", None)
+        d.setdefault("space", "general")
         out.append(d)
     return out
 
@@ -450,8 +455,8 @@ async def community_feed():
 async def create_post(post: PostCreate):
     doc = {
         "author": post.author, "avatar_color": "#D68C7A", "location": "You",
-        "text": post.text, "topic": post.topic, "likes": 0, "created_at": now_iso(),
-        "device_id": post.device_id,
+        "text": post.text, "topic": post.topic, "space": post.space,
+        "likes": 0, "created_at": now_iso(), "device_id": post.device_id,
     }
     res = await db.community_posts.insert_one(doc)
     doc["id"] = str(res.inserted_id)
@@ -478,6 +483,336 @@ async def add_comment(post_id: str, c: CommentCreate):
     await db.comments.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+# ===========================================================================
+# BEACON — presence, matching, peer chat, baby tracker, spaces, guides, i18n
+# ===========================================================================
+
+ETHNICITY_TAGS = [
+    "South Asian / Indian",
+    "Latina / Hispanic",
+    "Black / African",
+    "East Asian",
+    "Middle Eastern / Arab",
+    "White / European",
+    "Mixed / Other",
+]
+
+# Cultural community sub-spaces (opt-in). key -> label
+CULTURAL_SPACES = [
+    {"key": "south_asian", "label": "South Asian Moms", "tag": "South Asian / Indian"},
+    {"key": "latina", "label": "Latina Moms", "tag": "Latina / Hispanic"},
+    {"key": "black", "label": "Black Moms", "tag": "Black / African"},
+    {"key": "east_asian", "label": "East Asian Moms", "tag": "East Asian"},
+    {"key": "mena", "label": "MENA Moms", "tag": "Middle Eastern / Arab"},
+]
+
+# Simulated concurrent "active" peers for the presence map + matching demo.
+# NOTE: these are DEMO peers so the map/matching feel alive in preview; real
+# two-way presence appears when multiple real users are online at once.
+MOCK_PEERS = [
+    {"id": "peer_dawn", "handle": "QuietDawn", "ethnicity": "South Asian / Indian", "allow_cultural_match": True, "display_tags": True, "dlat": 0.06, "dlng": -0.09, "mins": 4},
+    {"id": "peer_moon", "handle": "MoonlitMama", "ethnicity": "Latina / Hispanic", "allow_cultural_match": True, "display_tags": False, "dlat": -0.11, "dlng": 0.07, "mins": 12},
+    {"id": "peer_tide", "handle": "GentleTide", "ethnicity": None, "allow_cultural_match": True, "display_tags": False, "dlat": 0.09, "dlng": 0.12, "mins": 2},
+    {"id": "peer_ember", "handle": "SoftEmber", "ethnicity": "Black / African", "allow_cultural_match": True, "display_tags": True, "dlat": -0.07, "dlng": -0.13, "mins": 21},
+    {"id": "peer_lotus", "handle": "NightLotus", "ethnicity": "South Asian / Indian", "allow_cultural_match": True, "display_tags": False, "dlat": 0.13, "dlng": -0.05, "mins": 7},
+    {"id": "peer_willow", "handle": "WillowRest", "ethnicity": "East Asian", "allow_cultural_match": True, "display_tags": False, "dlat": -0.05, "dlng": 0.10, "mins": 15},
+    {"id": "peer_sol", "handle": "SolMadre", "ethnicity": "Latina / Hispanic", "allow_cultural_match": False, "display_tags": False, "dlat": 0.03, "dlng": 0.14, "mins": 33},
+    {"id": "peer_star", "handle": "StillStar", "ethnicity": None, "allow_cultural_match": True, "display_tags": False, "dlat": -0.12, "dlng": -0.04, "mins": 9},
+]
+
+PEER_REPLIES = [
+    "I hear you. The nights are so long, aren't they? You're not alone in this. 🤍",
+    "That sounds really hard. Thank you for trusting me with it.",
+    "I'm awake too, feeding right now. We've got each other tonight.",
+    "You're doing so much better than you think. Be gentle with yourself.",
+    "Sending you a big virtual hug. What helps you feel even a little calmer?",
+]
+
+GUIDES = [
+    {"id": "recovery-basics", "topic": "Recovery", "title": "Your body after birth",
+     "body": "Healing takes time. Rest when you can, stay hydrated, and don't rush your recovery. Bleeding, cramping and fatigue are normal in the early weeks.",
+     "variants": [
+        {"culture": "South Asian / Indian", "title": "Traditional confinement (Jaappa / Sutika)", "body": "Many South Asian families observe 40 days of rest with warm foods, oil massage and family support. Blend the parts that comfort you with your provider's guidance."},
+        {"culture": "Latina / Hispanic", "title": "La Cuarentena", "body": "The 40-day cuarentena emphasizes rest, warmth and family care. Honor the traditions that nourish you while listening to your body."},
+     ]},
+    {"id": "breastfeeding", "topic": "Feeding", "title": "Breastfeeding & feeding support",
+     "body": "Fed is best. Whether breast, bottle or both, a good latch, frequent feeds and support make a difference. Reach out to a lactation consultant if it hurts.",
+     "variants": [
+        {"culture": "East Asian", "title": "Warm foods & soups", "body": "Traditional postpartum soups (e.g., seaweed soup) are believed to support milk supply and recovery. Combine with balanced nutrition."},
+     ]},
+    {"id": "mental-health", "topic": "Mental health", "title": "Your emotional wellbeing",
+     "body": "Mood shifts are common. Baby blues often ease within two weeks. If sadness, anxiety or emptiness linger, it may be worth discussing with a provider — this is common and treatable.",
+     "variants": []},
+    {"id": "relationships", "topic": "Relationships", "title": "Relationship changes",
+     "body": "A new baby reshapes relationships. Communicate needs openly, share the load, and protect small moments of connection with your partner or support people.",
+     "variants": []},
+]
+
+
+class BeaconSettings(BaseModel):
+    device_id: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    baby_age_weeks: Optional[int] = None
+    due_date: Optional[str] = None
+    timezone: Optional[str] = None
+    language: Optional[str] = None
+    ethnicity: Optional[str] = None
+    matching_preference: Optional[str] = None   # similar / none / diverse
+    display_tags: Optional[bool] = None
+    allow_cultural_match: Optional[bool] = None
+
+
+class PresenceToggle(BaseModel):
+    device_id: str
+    awake: bool
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class MatchRequest(BaseModel):
+    device_id: str
+
+
+class PeerMessageCreate(BaseModel):
+    device_id: str
+    text: str
+
+
+class BabyLogCreate(BaseModel):
+    device_id: str
+    kind: str            # feed / sleep / diaper
+    detail: Optional[str] = None
+
+
+class SpaceAction(BaseModel):
+    device_id: str
+    space: str
+
+
+def jitter_coords(lat: float, lng: float, max_miles: float = 10.0):
+    """Privacy-preserving randomization. Returns coords offset by up to max_miles."""
+    r = max_miles / 69.0
+    u = random.random()
+    w = r * math.sqrt(u)
+    t = 2 * math.pi * random.random()
+    dlat = w * math.cos(t)
+    dlng = w * math.sin(t) / max(math.cos(math.radians(lat)), 0.1)
+    return round(lat + dlat, 5), round(lng + dlng, 5)
+
+
+# ----- Beacon settings / profile extension -----
+@api_router.get("/beacon/meta")
+async def beacon_meta():
+    return {"ethnicity_tags": ETHNICITY_TAGS, "cultural_spaces": CULTURAL_SPACES}
+
+
+@api_router.patch("/beacon/settings")
+async def update_beacon_settings(s: BeaconSettings):
+    update = {k: v for k, v in s.model_dump().items() if k != "device_id" and v is not None}
+    if update:
+        await db.profiles.update_one({"device_id": s.device_id}, {"$set": update}, upsert=True)
+    doc = await db.profiles.find_one({"device_id": s.device_id}, {"_id": 0})
+    return doc or {}
+
+
+@api_router.delete("/beacon/ethnicity/{device_id}")
+async def delete_ethnicity(device_id: str):
+    # Fully remove the optional cultural data and disable cultural matching.
+    await db.profiles.update_one(
+        {"device_id": device_id},
+        {"$unset": {"ethnicity": "", "allow_cultural_match": ""},
+         "$set": {"matching_preference": "none", "display_tags": False}},
+    )
+    doc = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    return {"ok": True, "profile": doc}
+
+
+# ----- Presence -----
+@api_router.post("/presence/toggle")
+async def presence_toggle(p: PresenceToggle):
+    doc = {"device_id": p.device_id, "awake": p.awake, "last_active": now_iso()}
+    if p.awake and p.lat is not None and p.lng is not None:
+        # jitter immediately; store ONLY the randomized location, discard raw.
+        jlat, jlng = jitter_coords(p.lat, p.lng)
+        doc["lat"] = jlat
+        doc["lng"] = jlng
+    await db.presence.update_one({"device_id": p.device_id}, {"$set": doc}, upsert=True)
+    return {"awake": p.awake}
+
+
+@api_router.get("/presence/active")
+async def presence_active(device_id: str):
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    # real active peers (anonymized, jittered coords only)
+    reals = await db.presence.find(
+        {"awake": True, "last_active": {"$gte": cutoff}, "device_id": {"$ne": device_id}}
+    ).to_list(100)
+    pins = []
+    for r in reals:
+        if r.get("lat") is not None:
+            pins.append({"id": r["device_id"][:8], "lat": r["lat"], "lng": r["lng"], "mins": 0})
+
+    # anchor mock peers around requester's stored (already jittered) location
+    me = await db.presence.find_one({"device_id": device_id})
+    anchor_lat = me.get("lat") if me and me.get("lat") is not None else 40.7128
+    anchor_lng = me.get("lng") if me and me.get("lng") is not None else -74.0060
+    for mp in MOCK_PEERS:
+        pins.append({
+            "id": mp["id"], "handle": mp["handle"],
+            "lat": round(anchor_lat + mp["dlat"], 5),
+            "lng": round(anchor_lng + mp["dlng"], 5),
+            "mins": mp["mins"],
+        })
+    return {"count": len(pins), "pins": pins,
+            "anchor": {"lat": anchor_lat, "lng": anchor_lng}}
+
+
+# ----- Smart peer matching (modular) -----
+def _select_peer(profile: dict):
+    """Returns (peer, outcome). Modular so the algorithm can be swapped later."""
+    pref = (profile or {}).get("matching_preference", "none")
+    my_tag = (profile or {}).get("ethnicity")
+    pool = list(MOCK_PEERS)
+    random.shuffle(pool)
+
+    if pref == "similar" and my_tag:
+        for p in pool:
+            if p["ethnicity"] == my_tag and p["allow_cultural_match"]:
+                return p, "matched-on-preference"
+    if pref == "diverse" and my_tag:
+        for p in pool:
+            if p["ethnicity"] and p["ethnicity"] != my_tag:
+                return p, "matched-on-diversity"
+    # fallback: any available active peer
+    return pool[0], "fallback"
+
+
+@api_router.post("/match/request")
+async def match_request(req: MatchRequest):
+    profile = await db.profiles.find_one({"device_id": req.device_id}, {"_id": 0}) or {}
+    peer, outcome = _select_peer(profile)
+
+    # tags only revealed if BOTH sides opted to display them
+    both_display = bool(profile.get("display_tags")) and bool(peer.get("display_tags"))
+    room_id = str(uuid.uuid4())
+    room = {
+        "room_id": room_id,
+        "device_id": req.device_id,
+        "peer_id": peer["id"],
+        "peer_handle": peer["handle"],
+        "peer_tag": peer["ethnicity"] if both_display else None,
+        "outcome": outcome,
+        "is_demo": True,
+        "created_at": now_iso(),
+    }
+    await db.peer_rooms.insert_one(room)
+    # opening message from peer
+    await db.peer_messages.insert_one({
+        "room_id": room_id, "sender": "peer", "handle": peer["handle"],
+        "text": "Hi, I'm here with you. Couldn't sleep either — want to talk?",
+        "created_at": now_iso(),
+    })
+    # anonymized analytics event
+    await db.match_events.insert_one({
+        "outcome": outcome,
+        "preference": profile.get("matching_preference", "none"),
+        "had_tag": bool(profile.get("ethnicity")),
+        "created_at": now_iso(),
+    })
+    return {"room_id": room_id, "peer_handle": peer["handle"],
+            "peer_tag": room["peer_tag"], "outcome": outcome}
+
+
+@api_router.get("/match/analytics")
+async def match_analytics():
+    total = await db.match_events.count_documents({})
+    on_pref = await db.match_events.count_documents({"outcome": "matched-on-preference"})
+    fallback = await db.match_events.count_documents({"outcome": "fallback"})
+    diverse = await db.match_events.count_documents({"outcome": "matched-on-diversity"})
+    return {"total": total, "matched_on_preference": on_pref,
+            "fallback": fallback, "matched_on_diversity": diverse}
+
+
+# ----- Peer chat (polling) -----
+@api_router.get("/peerchat/{room_id}")
+async def peerchat_get(room_id: str):
+    room = await db.peer_rooms.find_one({"room_id": room_id}, {"_id": 0})
+    msgs = await db.peer_messages.find({"room_id": room_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return {"room": room, "messages": msgs}
+
+
+@api_router.post("/peerchat/{room_id}")
+async def peerchat_send(room_id: str, m: PeerMessageCreate):
+    room = await db.peer_rooms.find_one({"room_id": room_id})
+    await db.peer_messages.insert_one({
+        "room_id": room_id, "sender": "me", "handle": "You",
+        "text": m.text, "created_at": now_iso(),
+    })
+    # demo peer gently responds so the conversation feels alive
+    if room and room.get("is_demo"):
+        reply = random.choice(PEER_REPLIES)
+        await db.peer_messages.insert_one({
+            "room_id": room_id, "sender": "peer",
+            "handle": room.get("peer_handle", "Peer"),
+            "text": reply, "created_at": now_iso(),
+        })
+    return {"ok": True}
+
+
+# ----- Baby tracker -----
+@api_router.post("/baby-log")
+async def baby_log(b: BabyLogCreate):
+    doc = {"device_id": b.device_id, "kind": b.kind, "detail": b.detail, "at": now_iso()}
+    await db.baby_logs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/baby-log/{device_id}")
+async def baby_logs(device_id: str, limit: int = 50):
+    docs = await db.baby_logs.find({"device_id": device_id}, {"_id": 0}).sort("at", -1).to_list(limit)
+    return docs
+
+
+# ----- Cultural spaces (opt-in) -----
+@api_router.get("/spaces/{device_id}")
+async def spaces_for(device_id: str):
+    prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0}) or {}
+    joined = prof.get("joined_spaces", [])
+    return {"spaces": CULTURAL_SPACES, "joined": joined}
+
+
+@api_router.post("/spaces/join")
+async def join_space(a: SpaceAction):
+    await db.profiles.update_one({"device_id": a.device_id},
+                                 {"$addToSet": {"joined_spaces": a.space}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.post("/spaces/leave")
+async def leave_space(a: SpaceAction):
+    await db.profiles.update_one({"device_id": a.device_id},
+                                 {"$pull": {"joined_spaces": a.space}})
+    return {"ok": True}
+
+
+# ----- Guides & resources (culturally-aware) -----
+@api_router.get("/guides")
+async def guides(culture: Optional[str] = None):
+    out = []
+    for g in GUIDES:
+        item = dict(g)
+        # surface the matching cultural variant first if user opted in
+        if culture:
+            variant = next((v for v in g["variants"] if v["culture"] == culture), None)
+            item["featured_variant"] = variant
+        else:
+            item["featured_variant"] = None
+        out.append(item)
+    return out
 
 
 app.include_router(api_router)

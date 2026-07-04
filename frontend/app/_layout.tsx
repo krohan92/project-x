@@ -14,6 +14,7 @@ import { useFonts } from "expo-font";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ProfileProvider } from "@/src/lib/profile-context";
+import { LanguageProvider } from "@/src/lib/i18n";
 import { colors } from "@/src/theme/theme";
 
 // Disable logbox errors etc so that users can see the app
@@ -45,32 +46,39 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ProfileProvider>
-          <WebFrame>
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: colors.surface },
-                animation: "fade",
-              }}
-            >
-              <Stack.Screen name="index" />
-              <Stack.Screen name="onboarding" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen
-                name="checkin"
-                options={{ presentation: "modal", animation: "slide_from_bottom" }}
-              />
-              <Stack.Screen
-                name="epds"
-                options={{ presentation: "modal", animation: "slide_from_bottom" }}
-              />
-              <Stack.Screen
-                name="breathe"
-                options={{ presentation: "modal", animation: "slide_from_bottom" }}
-              />
-              <Stack.Screen name="thread/[id]" />
-            </Stack>
-          </WebFrame>
+          <LanguageProvider>
+            <WebFrame>
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: colors.surface },
+                  animation: "fade",
+                }}
+              >
+                <Stack.Screen name="index" />
+                <Stack.Screen name="onboarding" />
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen
+                  name="checkin"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
+                <Stack.Screen
+                  name="epds"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
+                <Stack.Screen
+                  name="breathe"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
+                <Stack.Screen
+                  name="beacon-settings"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
+                <Stack.Screen name="thread/[id]" />
+                <Stack.Screen name="peer/[room]" />
+              </Stack>
+            </WebFrame>
+          </LanguageProvider>
         </ProfileProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
