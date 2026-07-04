@@ -27,6 +27,18 @@ An intuitive, empathetic postpartum companion app for new moms. Builds history (
 - Breathe: animated 4-4-6 breathing exercise.
 - Tested: 18/18 backend pytest + full frontend e2e, all passing. Live Claude confirmed.
 
+## Beacon feature set (added 2026-07-04) — layered onto Aura
+- **Live presence map ("Light Your Beacon")**: toggle awake, anonymized ±10mi server-side jittered pins on real OpenStreetMap tiles (Leaflet in iframe/WebView, no API key). Raw coordinates never stored.
+- **Smart peer matching (modular, server-side)**: filter active → prefer same cultural tag (if user set "similar" + tag + peer allows) → fallback to any available. Cultural tags never revealed unless BOTH opted to display. Outcomes logged anonymized (`/api/match/analytics`).
+- **Peer chat**: polling-based 1:1 rooms; demo peers reply with canned supportive messages (real two-way requires concurrent users).
+- **Baby & Me tracker**: quick log Feed/Sleep/Diaper + recent activity; links to mood check-in, trends, EPDS.
+- **Cultural community sub-spaces**: opt-in join/leave in Circle; posts scoped per space; never auto-assigned.
+- **Culturally-aware guides**: `/api/guides?culture=` surfaces the matching cultural variant first when user opted into cultural matching.
+- **Privacy-first cultural data**: ethnicity is optional, editable, and fully deletable (`DELETE /api/beacon/ethnicity`), never sold/shared.
+- **i18n**: EN / ES / HI UI for all Beacon screens + tab labels (`src/lib/i18n.tsx`), language persisted.
+- IA: 5 tabs (Today, Beacon, Track, Circle, Care); Talk & Journey kept as hidden routes.
+- Tested: 15/15 Beacon backend pytest + full frontend e2e passing.
+
 ## Backlog
 - **P1**: Real geolocation-based mom matching (permission-gated); direct 1:1 peer messaging; adaptive check-in cadence (daily → every few days) with reminders; save/bookmark tips.
 - **P1**: Timezone-aware mood-today query; toast on profile-save failure.
