@@ -14,7 +14,7 @@ import random
 import math
 from datetime import datetime, timezone, date, timedelta
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+import anthropic
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -24,7 +24,8 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
+anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -135,14 +136,14 @@ class CommentCreate(BaseModel):
 # Static / research-backed content
 # ---------------------------------------------------------------------------
 QUOTES = [
-    {"text": "You are not the same as you were before, and that is okay. You are becoming.", "author": "Aura"},
+    {"text": "You are not the same as you were before, and that is okay. You are becoming.", "author": "Cuddle"},
     {"text": "Being a mother is learning about strengths you didn't know you had.", "author": "Linda Wooten"},
-    {"text": "You don't have to be perfect to be an amazing mom.", "author": "Aura"},
-    {"text": "Rest is not a reward for finishing. It is fuel for continuing.", "author": "Aura"},
-    {"text": "The days are long, but the years are short. Be gentle with today.", "author": "Aura"},
-    {"text": "You are doing a beautiful job, even on the days it doesn't feel like it.", "author": "Aura"},
-    {"text": "Your baby doesn't need a perfect mother. They need a present one — and you are here.", "author": "Aura"},
-    {"text": "Healing is not linear. Some days will feel heavier, and that's part of it.", "author": "Aura"},
+    {"text": "You don't have to be perfect to be an amazing mom.", "author": "Cuddle"},
+    {"text": "Rest is not a reward for finishing. It is fuel for continuing.", "author": "Cuddle"},
+    {"text": "The days are long, but the years are short. Be gentle with today.", "author": "Cuddle"},
+    {"text": "You are doing a beautiful job, even on the days it doesn't feel like it.", "author": "Cuddle"},
+    {"text": "Your baby doesn't need a perfect mother. They need a present one — and you are here.", "author": "Cuddle"},
+    {"text": "Healing is not linear. Some days will feel heavier, and that's part of it.", "author": "Cuddle"},
 ]
 
 # EPDS — Edinburgh Postnatal Depression Scale (Cox, Holden & Sagovsky, 1987)
@@ -268,7 +269,7 @@ def build_system_prompt(profile: Optional[dict]) -> str:
         if parts:
             ctx = "Context about her: " + ", ".join(parts) + "."
     return (
-        "You are Aura, a warm, deeply empathetic companion for mothers in the postpartum period. "
+        "You are Cuddle, a warm, deeply empathetic companion for mothers in the postpartum period. "
         "You are NOT a doctor and you never diagnose, prescribe, or give clinical medical instructions. "
         "You are a supportive, non-judgmental listener — like a wise, gentle friend who has been through it. "
         f"{ctx}\n\n"
@@ -290,7 +291,7 @@ def build_system_prompt(profile: Optional[dict]) -> str:
 # ---------------------------------------------------------------------------
 @api_router.get("/")
 async def root():
-    return {"message": "Aura Postpartum API"}
+    return {"message": "Cuddle Postpartum API"}
 
 
 @api_router.post("/profile")
@@ -403,29 +404,29 @@ async def chat(req: ChatRequest):
     history = await db.chat_messages.find(
         {"session_id": req.session_id}, {"_id": 0}).sort("created_at", 1).to_list(40)
 
-    if not EMERGENT_LLM_KEY:
+    if not anthropic_client:
         raise HTTPException(status_code=500, detail="LLM key not configured")
-
-    chat_client = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=req.session_id,
-        system_message=system_prompt,
-    ).with_model("anthropic", "claude-sonnet-4-6")
 
     # feed prior turns so the model has context (exclude the just-added msg)
     prior = history[:-1][-12:]
-    context_preamble = ""
-    if prior:
-        lines = []
-        for m in prior:
-            who = "Mother" if m["role"] == "user" else "You (Aura)"
-            lines.append(f"{who}: {m['text']}")
-        context_preamble = ("Here is the recent conversation so far:\n" +
-                            "\n".join(lines) + "\n\nHer new message:\n")
+    anthropic_messages = []
+    for m in prior:
+        anthropic_messages.append({
+            "role": "user" if m["role"] == "user" else "assistant",
+            "content": m["text"],
+        })
+    anthropic_messages.append({"role": "user", "content": req.message})
 
     try:
-        reply = await chat_client.send_message(
-            UserMessage(text=context_preamble + req.message))
+        response = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=anthropic_messages,
+        )
+        reply = "".join(
+            block.text for block in response.content if block.type == "text"
+        )
     except Exception as e:
         logger.exception("LLM error")
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
@@ -590,6 +591,26 @@ class BabyLogCreate(BaseModel):
 class SpaceAction(BaseModel):
     device_id: str
     space: str
+
+
+# ----- Caregiver hand-off ("Tag Out") -----
+class HouseholdCreate(BaseModel):
+    device_id: str
+    name: str
+    role: str = "primary"          # primary / partner / caregiver
+
+
+class HouseholdJoin(BaseModel):
+    device_id: str
+    household_code: str
+    name: str
+    role: str = "partner"
+
+
+class HandoffSwitch(BaseModel):
+    household_code: str
+    device_id: str                 # caregiver now taking over
+    note: Optional[str] = None
 
 
 def jitter_coords(lat: float, lng: float, max_miles: float = 10.0):
@@ -774,6 +795,174 @@ async def baby_log(b: BabyLogCreate):
 @api_router.get("/baby-log/{device_id}")
 async def baby_logs(device_id: str, limit: int = 50):
     docs = await db.baby_logs.find({"device_id": device_id}, {"_id": 0}).sort("at", -1).to_list(limit)
+    return docs
+
+
+# ----- Caregiver hand-off ("Tag Out") -----
+# A lightweight, no-login household: one caregiver creates a short code,
+# others join with it. We track who is currently "on duty" and use recent
+# baby-log + mood signals to suggest a gentle, transparent hand-off nudge.
+# This is a support suggestion, never a scorecard or an automatic action.
+
+NIGHT_START_HOUR = 21   # 9pm
+NIGHT_END_HOUR = 7      # 7am
+
+
+def _make_household_code() -> str:
+    return uuid.uuid4().hex[:6].upper()
+
+
+async def _get_household(code: str):
+    h = await db.households.find_one({"household_code": code}, {"_id": 0})
+    if not h:
+        raise HTTPException(status_code=404, detail="Household not found")
+    return h
+
+
+@api_router.post("/household")
+async def create_household(h: HouseholdCreate):
+    code = _make_household_code()
+    doc = {
+        "household_code": code,
+        "members": [{"device_id": h.device_id, "name": h.name, "role": h.role}],
+        "on_duty_device_id": h.device_id,
+        "on_duty_since": now_iso(),
+        "created_at": now_iso(),
+    }
+    await db.households.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.post("/household/join")
+async def join_household(j: HouseholdJoin):
+    h = await _get_household(j.household_code)
+    if not any(m["device_id"] == j.device_id for m in h["members"]):
+        await db.households.update_one(
+            {"household_code": j.household_code},
+            {"$push": {"members": {"device_id": j.device_id, "name": j.name, "role": j.role}}},
+        )
+    h = await _get_household(j.household_code)
+    return h
+
+
+@api_router.get("/household/by-device/{device_id}")
+async def household_for_device(device_id: str):
+    h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    return h  # None if not part of a household yet
+
+
+def _hours_between(iso_a: str, iso_b: str) -> float:
+    a = datetime.fromisoformat(iso_a)
+    b = datetime.fromisoformat(iso_b)
+    return abs((b - a).total_seconds()) / 3600.0
+
+
+def _is_night(iso_ts: str) -> bool:
+    hour = datetime.fromisoformat(iso_ts).hour
+    return hour >= NIGHT_START_HOUR or hour < NIGHT_END_HOUR
+
+
+async def compute_handoff_score(household: dict) -> dict:
+    """Weighted, transparent fatigue/hand-off score for whoever is on duty.
+    0-100. Higher = stronger case for tagging out. Every input is shown
+    in the breakdown so this never feels like a black-box judgment."""
+    on_duty_id = household.get("on_duty_device_id")
+    on_duty_since = household.get("on_duty_since") or household["created_at"]
+    now = now_iso()
+
+    hours_on_duty = _hours_between(on_duty_since, now)
+
+    # Interruptions logged by the on-duty caregiver since their shift started
+    logs = await db.baby_logs.find(
+        {"device_id": on_duty_id, "at": {"$gte": on_duty_since}}, {"_id": 0}
+    ).to_list(200)
+    interruption_count = len(logs)
+    night_interruptions = sum(1 for l in logs if _is_night(l["at"]))
+
+    # Most recent self-reported mood/energy from the on-duty caregiver
+    latest_mood = await db.mood.find_one(
+        {"device_id": on_duty_id}, {"_id": 0}, sort=[("created_at", -1)]
+    )
+    energy = latest_mood.get("energy") if latest_mood else None
+    mood = latest_mood.get("mood") if latest_mood else None
+
+    # --- weighted scoring (each component capped so no single factor dominates) ---
+    duty_points = min(hours_on_duty * 6, 40)                       # long stretch on duty
+    interruption_points = min(interruption_count * 5, 25)          # frequency of interruptions
+    night_points = min(night_interruptions * 4, 20)                # overnight is harder
+    energy_points = max(0, (3 - energy) * 6) if energy is not None else 0   # low self-reported energy
+    mood_points = max(0, (3 - mood) * 4) if mood is not None else 0        # low self-reported mood
+
+    score = round(min(duty_points + interruption_points + night_points + energy_points + mood_points, 100))
+
+    if score >= 60:
+        level = "suggest"
+        message = "It's been a long stretch. This looks like a good moment for someone else to take over."
+    elif score >= 35:
+        level = "check_in"
+        message = "Things are adding up a bit — a check-in or a short break could help."
+    else:
+        level = "steady"
+        message = "Things look steady right now."
+
+    other_member = next(
+        (m for m in household["members"] if m["device_id"] != on_duty_id), None
+    )
+
+    return {
+        "score": score,
+        "level": level,
+        "message": message,
+        "on_duty_device_id": on_duty_id,
+        "hours_on_duty": round(hours_on_duty, 1),
+        "suggested_next": other_member,
+        "breakdown": {
+            "hours_on_duty": round(hours_on_duty, 1),
+            "interruptions_since_shift_start": interruption_count,
+            "overnight_interruptions": night_interruptions,
+            "latest_energy_1to5": energy,
+            "latest_mood_1to5": mood,
+        },
+    }
+
+
+@api_router.get("/handoff/score/{household_code}")
+async def handoff_score(household_code: str):
+    h = await _get_household(household_code)
+    return await compute_handoff_score(h)
+
+
+@api_router.post("/handoff/switch")
+async def handoff_switch(s: HandoffSwitch):
+    h = await _get_household(s.household_code)
+    if not any(m["device_id"] == s.device_id for m in h["members"]):
+        raise HTTPException(status_code=400, detail="Not a member of this household")
+
+    prev_duty_id = h.get("on_duty_device_id")
+    prev_since = h.get("on_duty_since") or h["created_at"]
+
+    await db.handoff_events.insert_one({
+        "household_code": s.household_code,
+        "from_device_id": prev_duty_id,
+        "to_device_id": s.device_id,
+        "prev_shift_hours": round(_hours_between(prev_since, now_iso()), 1),
+        "note": s.note,
+        "at": now_iso(),
+    })
+    await db.households.update_one(
+        {"household_code": s.household_code},
+        {"$set": {"on_duty_device_id": s.device_id, "on_duty_since": now_iso()}},
+    )
+    h = await _get_household(s.household_code)
+    return h
+
+
+@api_router.get("/handoff/history/{household_code}")
+async def handoff_history(household_code: str, limit: int = 20):
+    docs = await db.handoff_events.find(
+        {"household_code": household_code}, {"_id": 0}
+    ).sort("at", -1).to_list(limit)
     return docs
 
 

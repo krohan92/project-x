@@ -10,6 +10,7 @@ import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
+import { HandoffCard } from "@/src/components/HandoffCard";
 
 const KINDS = [
   { key: "feed", labelKey: "track.logFeed", icon: "coffee", color: "#D68C7A" },
@@ -79,8 +80,11 @@ export default function Track() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        {/* Tag Team hand-off */}
+        <HandoffCard />
+
         {/* Quick log */}
-        <Txt display style={styles.section}>{t("track.section.baby")}</Txt>
+        <Txt display style={[styles.section, { marginTop: spacing.xl }]}>{t("track.section.baby")}</Txt>
         <View style={styles.quickRow}>
           {KINDS.map((k) => (
             <Pressable

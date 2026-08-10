@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "cuddle-frontend",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
@@ -9,6 +9,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "vercel-build": "expo export -p web",
     "lint": "expo lint"
   },
   "dependencies": {

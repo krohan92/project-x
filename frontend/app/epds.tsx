@@ -18,7 +18,7 @@ const BANDS: Record<string, { label: string; color: string; head: string; note: 
     label: "Low likelihood",
     color: colors.success,
     head: "You're holding up",
-    note: "Your responses suggest you're coping reasonably well right now. That said, feelings shift day to day — keep checking in with yourself, and know Aura is always here.",
+    note: "Your responses suggest you're coping reasonably well right now. That said, feelings shift day to day — keep checking in with yourself, and know Cuddle is always here.",
   },
   possible: {
     label: "Worth a gentle look",
@@ -152,7 +152,7 @@ export default function Epds() {
             />
             <Button
               testID="result-talk-button"
-              label="Talk to Aura"
+              label="Talk to Cuddle"
               variant="secondary"
               onPress={() => router.replace("/(tabs)/talk")}
             />

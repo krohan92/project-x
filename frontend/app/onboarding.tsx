@@ -155,7 +155,7 @@ export default function Onboarding() {
         />
         <View style={[styles.welcomeContent, { paddingBottom: insets.bottom + spacing.xl }]}>
           <Animated.View entering={FadeInDown.duration(700)}>
-            <Txt style={styles.welcomeKicker}>AURA · POSTPARTUM COMPANION</Txt>
+            <Txt style={styles.welcomeKicker}>CUDDLE · POSTPARTUM COMPANION</Txt>
             <Txt display style={styles.welcomeTitle}>
               Welcome, Mama.
             </Txt>
@@ -172,7 +172,7 @@ export default function Onboarding() {
               style={{ marginTop: spacing.xl }}
             />
             <Txt style={styles.disclaimer}>
-              Aura offers support and companionship. It is not medical care and
+              Cuddle offers support and companionship. It is not medical care and
               does not replace your healthcare provider.
             </Txt>
           </Animated.View>
@@ -392,7 +392,7 @@ export default function Onboarding() {
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
           <Button
             testID="onboarding-next-button"
-            label={step === TOTAL - 1 ? "Enter Aura" : "Continue"}
+            label={step === TOTAL - 1 ? "Enter Cuddle" : "Continue"}
             onPress={next}
             disabled={!canNext()}
             loading={saving}

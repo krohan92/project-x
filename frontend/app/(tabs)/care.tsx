@@ -168,7 +168,7 @@ export default function Care() {
         <View style={styles.disclaimer}>
           <Feather name="info" size={16} color={colors.muted} />
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm, flex: 1, lineHeight: 19 }}>
-            Aura provides emotional support and educational information only. It is not a
+            Cuddle provides emotional support and educational information only. It is not a
             medical service and does not diagnose or treat any condition. Always consult your
             healthcare provider for medical concerns.
           </Txt>

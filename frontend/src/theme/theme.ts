@@ -1,4 +1,4 @@
-// Design tokens for Aura Postpartum — "Hand-Drawn / Journal" personality.
+// Design tokens for Cuddle Postpartum — "Hand-Drawn / Journal" personality.
 export const colors = {
   surface: "#FDFBF7",
   onSurface: "#2C2925",

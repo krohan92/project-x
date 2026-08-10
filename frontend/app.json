@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Cuddle",
+    "slug": "cuddle-postpartum",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "cuddle",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.postpartumcarehub.f3quyn",
+      "bundleIdentifier": "com.cuddle.postpartum",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
       }
@@ -21,7 +21,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.postpartumcarehub.f3quyn",
+      "package": "com.cuddle.postpartum",
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "web": {

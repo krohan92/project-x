@@ -159,7 +159,7 @@ export default function Home() {
             <View style={[styles.quickIcon, { backgroundColor: colors.brandTertiary }]}>
               <Feather name="message-circle" size={22} color={colors.onBrandTertiary} />
             </View>
-            <Txt weight="500">Talk to Aura</Txt>
+            <Txt weight="500">Talk to Cuddle</Txt>
             <Txt style={styles.quickSub}>Vent or ask anything, 24/7</Txt>
           </Pressable>
           <Pressable style={styles.quickCard} testID="quick-epds" onPress={() => router.push("/epds")}>

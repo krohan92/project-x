@@ -3,7 +3,7 @@ import { storage } from "@/src/utils/storage";
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 const API = `${BASE}/api`;
 
-const DEVICE_KEY = "aura_device_id";
+const DEVICE_KEY = "cuddle_device_id";
 
 function makeId(): string {
   return (
@@ -118,4 +118,15 @@ export const api = {
 
   guides: (culture?: string) =>
     req(`/guides${culture ? `?culture=${encodeURIComponent(culture)}` : ""}`),
+
+  // ----- Caregiver hand-off ("Tag Out") -----
+  createHousehold: (body: { device_id: string; name: string; role?: string }) =>
+    req(`/household`, { method: "POST", body: JSON.stringify(body) }),
+  joinHousehold: (body: { device_id: string; household_code: string; name: string; role?: string }) =>
+    req(`/household/join`, { method: "POST", body: JSON.stringify(body) }),
+  householdForDevice: (deviceId: string) => req(`/household/by-device/${deviceId}`),
+  handoffScore: (householdCode: string) => req(`/handoff/score/${householdCode}`),
+  handoffSwitch: (body: { household_code: string; device_id: string; note?: string }) =>
+    req(`/handoff/switch`, { method: "POST", body: JSON.stringify(body) }),
+  handoffHistory: (householdCode: string) => req(`/handoff/history/${householdCode}`),
 };

@@ -102,7 +102,7 @@ export default function Talk() {
           <Feather name="feather" size={18} color={colors.onBrandPrimary} />
         </View>
         <View style={{ flex: 1 }}>
-          <Txt display style={{ fontSize: fontSize.xl }}>Aura</Txt>
+          <Txt display style={{ fontSize: fontSize.xl }}>Cuddle</Txt>
           <Txt style={{ color: colors.success, fontSize: fontSize.sm }}>Here for you, always</Txt>
         </View>
         <Pressable testID="chat-resources-button" onPress={() => router.push("/care")} hitSlop={10}>
@@ -161,7 +161,7 @@ export default function Talk() {
             <View style={[styles.bubbleRow, styles.rowLeft]}>
               <View style={[styles.bubble, styles.aiBubble, styles.typing]}>
                 <ActivityIndicator size="small" color={colors.onBrandSecondary} />
-                <Txt style={{ color: colors.onBrandSecondary }}>Aura is here...</Txt>
+                <Txt style={{ color: colors.onBrandSecondary }}>Cuddle is here...</Txt>
               </View>
             </View>
           )}
