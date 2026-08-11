@@ -50,6 +50,7 @@ export type Profile = {
   support_level?: string | null;
   initial_mood?: number | null;
   concerns: string[];
+  postpartum_appt_done?: boolean;
   created_at?: string;
 };
 
@@ -109,6 +110,9 @@ export const api = {
   babyLog: (body: any) =>
     req(`/baby-log`, { method: "POST", body: JSON.stringify(body) }),
   babyLogs: (deviceId: string) => req(`/baby-log/${deviceId}`),
+  babyLogSummary: (deviceId: string) => req(`/baby-log/${deviceId}/summary`),
+  babyLogPredictions: (deviceId: string) => req(`/baby-log/${deviceId}/predictions`),
+  handoffBalance: (householdCode: string) => req(`/handoff/balance/${householdCode}`),
 
   spaces: (deviceId: string) => req(`/spaces/${deviceId}`),
   joinSpace: (body: any) =>
@@ -129,4 +133,62 @@ export const api = {
   handoffSwitch: (body: { household_code: string; device_id: string; note?: string }) =>
     req(`/handoff/switch`, { method: "POST", body: JSON.stringify(body) }),
   handoffHistory: (householdCode: string) => req(`/handoff/history/${householdCode}`),
+  registerPush: (body: { device_id: string; expo_push_token: string }) =>
+    req(`/push/register`, { method: "POST", body: JSON.stringify(body) }),
+
+  // ----- Give & Share -----
+  shopCategories: () => req(`/shop/categories`),
+  shopItems: (params?: { category?: string; device_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.category) qs.set("category", params.category);
+    if (params?.device_id) qs.set("device_id", params.device_id);
+    const q = qs.toString();
+    return req(`/shop/items${q ? `?${q}` : ""}`);
+  },
+  shopItem: (itemId: string) => req(`/shop/items/${itemId}`),
+  createShopItem: (body: any) => req(`/shop/items`, { method: "POST", body: JSON.stringify(body) }),
+  claimShopItem: (itemId: string) => req(`/shop/items/${itemId}/claim`, { method: "PATCH" }),
+  deleteShopItem: (itemId: string) => req(`/shop/items/${itemId}`, { method: "DELETE" }),
+  expressInterest: (itemId: string, deviceId: string) =>
+    req(`/shop/items/${itemId}/interest`, { method: "POST", body: JSON.stringify({ device_id: deviceId }) }),
+  myShopThreads: (deviceId: string) => req(`/shop/threads/${deviceId}`),
+  shopThreadMessages: (threadId: string) => req(`/shop/thread/${threadId}`),
+  sendShopMessage: (threadId: string, body: { device_id: string; text: string }) =>
+    req(`/shop/thread/${threadId}`, { method: "POST", body: JSON.stringify(body) }),
+
+  // ----- Postpartum recovery -----
+  recoveryWarningSigns: () => req(`/recovery/warning-signs`),
+  recoveryCheckin: (body: any) => req(`/recovery/checkin`, { method: "POST", body: JSON.stringify(body) }),
+  recoveryCheckins: (deviceId: string) => req(`/recovery/checkins/${deviceId}`),
+  recoveryToday: (deviceId: string) => req(`/recovery/today/${deviceId}`),
+  updateAppointment: (deviceId: string, done: boolean) =>
+    req(`/profile/appointment`, { method: "PATCH", body: JSON.stringify({ device_id: deviceId, postpartum_appt_done: done }) }),
+
+  // ----- Meal support -----
+  createMealTrain: (body: { device_id: string; title: string; notes?: string }) =>
+    req(`/mealtrain`, { method: "POST", body: JSON.stringify(body) }),
+  mealTrainForDevice: (deviceId: string) => req(`/mealtrain/by-device/${deviceId}`),
+  getMealTrain: (code: string) => req(`/mealtrain/${code}`),
+  signUpMealSlot: (code: string, body: { date: string; giver_name: string; giver_contact?: string; meal_description?: string }) =>
+    req(`/mealtrain/${code}/slots`, { method: "POST", body: JSON.stringify(body) }),
+  cancelMealSlot: (code: string, slotId: string, slotToken: string) =>
+    req(`/mealtrain/${code}/slots/${slotId}?slot_token=${encodeURIComponent(slotToken)}`, { method: "DELETE" }),
+  mealCheckin: (deviceId: string, ateToday: boolean) =>
+    req(`/meal-checkin`, { method: "POST", body: JSON.stringify({ device_id: deviceId, ate_today: ateToday }) }),
+  mealCheckinToday: (deviceId: string) => req(`/meal-checkin/${deviceId}/today`),
+
+  // ----- Dad's Corner -----
+  dadCheckinQuestions: () => req(`/dad-checkin/questions`),
+  dadTips: () => req(`/dad-tips`),
+  submitDadCheckin: (body: { device_id: string; answers: number[] }) =>
+    req(`/dad-checkin`, { method: "POST", body: JSON.stringify(body) }),
+  dadCheckinHistory: (deviceId: string) => req(`/dad-checkin/${deviceId}`),
+
+  // ----- Baby Brain Capture -----
+  createBrainNote: (body: { device_id: string; text: string; category?: string }) =>
+    req(`/brain-notes`, { method: "POST", body: JSON.stringify(body) }),
+  brainNotes: (deviceId: string, includeDone = false) =>
+    req(`/brain-notes/${deviceId}${includeDone ? "?include_done=true" : ""}`),
+  completeBrainNote: (noteId: string) => req(`/brain-notes/${noteId}/done`, { method: "PATCH" }),
+  deleteBrainNote: (noteId: string) => req(`/brain-notes/${noteId}`, { method: "DELETE" }),
 };

@@ -18,6 +18,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
+import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
@@ -33,6 +34,7 @@ function timeAgo(iso: string) {
 }
 
 export default function Community() {
+  const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile, deviceId } = useProfile();
@@ -129,7 +131,7 @@ export default function Community() {
     space === "general" ? t("circle.general") : allSpaces.find((s) => s.key === space)?.label || space;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View style={styles.headerRow}>
           <View>
@@ -141,6 +143,14 @@ export default function Community() {
             <Txt style={{ color: colors.onBrandSecondary, fontSize: fontSize.sm }}>{t("circle.spaces")}</Txt>
           </Pressable>
         </View>
+        <Pressable testID="give-share-banner" onPress={() => router.push("/shop")} style={styles.shopBanner}>
+          <Feather name="gift" size={18} color={colors.brand} />
+          <View style={{ flex: 1 }}>
+            <Txt weight="500">Give & Share</Txt>
+            <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Free & low-cost baby things, mom to mom</Txt>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.muted} />
+        </Pressable>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
           <Pressable
             testID="space-general"
@@ -307,6 +317,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: radius.pill,
+  },
+  shopBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginTop: spacing.md,
   },
   chipsRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm },
   chip: {

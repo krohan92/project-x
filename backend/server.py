@@ -15,6 +15,7 @@ import math
 from datetime import datetime, timezone, date, timedelta
 
 import anthropic
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -66,6 +67,7 @@ class Profile(BaseModel):
     support_level: Optional[str] = None           # strong / some / limited
     initial_mood: Optional[int] = None            # 1-5
     concerns: List[str] = []
+    postpartum_appt_done: bool = False
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -144,6 +146,11 @@ QUOTES = [
     {"text": "You are doing a beautiful job, even on the days it doesn't feel like it.", "author": "Cuddle"},
     {"text": "Your baby doesn't need a perfect mother. They need a present one — and you are here.", "author": "Cuddle"},
     {"text": "Healing is not linear. Some days will feel heavier, and that's part of it.", "author": "Cuddle"},
+    {"text": "You can love this life and still find parts of it incredibly hard. Both are true.", "author": "Cuddle"},
+    {"text": "Asking for help is not giving up. It's how you keep going.", "author": "Cuddle"},
+    {"text": "Small moments count. A held gaze, a soft word — you're building something real.", "author": "Cuddle"},
+    {"text": "You get to have needs too. Meeting them isn't selfish, it's sustainable.", "author": "Cuddle"},
+    {"text": "Some days survival is the whole job, and that's still doing it well.", "author": "Cuddle"},
 ]
 
 # EPDS — Edinburgh Postnatal Depression Scale (Cox, Holden & Sagovsky, 1987)
@@ -273,12 +280,20 @@ def build_system_prompt(profile: Optional[dict]) -> str:
         "You are NOT a doctor and you never diagnose, prescribe, or give clinical medical instructions. "
         "You are a supportive, non-judgmental listener — like a wise, gentle friend who has been through it. "
         f"{ctx}\n\n"
-        "How you respond:\n"
-        "- Lead with warmth and validation. Reflect her feelings back before offering anything.\n"
-        "- Keep replies fairly short (2-5 sentences), soft, and human. Avoid clinical or robotic language.\n"
-        "- Ask one gentle, open follow-up question when it feels natural, so she feels heard.\n"
-        "- Offer small, doable suggestions (rest, hydration, breathing, reaching out) — never overwhelming lists.\n"
-        "- Normalize the hard parts of new motherhood. Remind her she is doing enough.\n"
+        "How you respond — listening comes first, always:\n"
+        "- Start by genuinely reflecting back what she said, in your own words, so she feels truly heard — "
+        "before anything else. Don't rush to fix or advise.\n"
+        "- Keep replies short (2-5 sentences), soft, and conversational — never clinical, never a bulleted list.\n"
+        "- Ask at most one gentle, open follow-up question, only when it feels natural, so the conversation "
+        "feels like a real back-and-forth, not an interrogation.\n"
+        "- Only after she feels heard, and only if it fits naturally, offer ONE small, doable suggestion — "
+        "never a list of options. Draw from simple things: a few minutes of slow breathing, a glass of water, "
+        "stepping outside for a moment, setting the baby down safely and taking two minutes for herself, "
+        "or asking her partner or another caregiver to take over for a bit if she sounds worn out.\n"
+        "- If it fits naturally, you can gently mention this app's own tools when relevant — the Breathe "
+        "exercises if she's anxious or wound up, or the Tag Team hand-off feature if she sounds like she's "
+        "been carrying things alone for a while — but only ever as a soft mention, never a pitch.\n"
+        "- Normalize the hard parts of new motherhood. Remind her she is doing enough, in your own words each time.\n"
         "- Encourage her to lean on her real-life support and her healthcare provider for medical concerns.\n\n"
         "SAFETY: If she expresses thoughts of harming herself or her baby, or seems in crisis, respond with calm compassion, "
         "take it seriously, and gently encourage her to reach out right now to the 988 Suicide & Crisis Lifeline (call or text 988) "
@@ -311,8 +326,9 @@ async def get_profile(device_id: str):
 
 @api_router.get("/quote")
 async def daily_quote():
-    idx = date.today().toordinal() % len(QUOTES)
-    return QUOTES[idx]
+    # A fresh gentle thought each time the app is opened, not just once a day —
+    # small moments of noticing something new each visit.
+    return random.choice(QUOTES)
 
 
 @api_router.get("/tips")
@@ -586,6 +602,10 @@ class BabyLogCreate(BaseModel):
     device_id: str
     kind: str            # feed / sleep / diaper
     detail: Optional[str] = None
+    amount_ml: Optional[float] = None       # feed quantity, stored canonically in ml
+    diaper_type: Optional[str] = None       # pee / poop / both
+    duration_minutes: Optional[int] = None  # sleep length, if known
+    at: Optional[str] = None                # backdate a log to when it actually happened
 
 
 class SpaceAction(BaseModel):
@@ -613,15 +633,196 @@ class HandoffSwitch(BaseModel):
     note: Optional[str] = None
 
 
-def jitter_coords(lat: float, lng: float, max_miles: float = 10.0):
-    """Privacy-preserving randomization. Returns coords offset by up to max_miles."""
+class PushRegister(BaseModel):
+    device_id: str
+    expo_push_token: str
+
+
+# ----- Give & Share (mom-to-mom item sharing) -----
+SHOP_CATEGORIES = [
+    {"key": "clothes", "label": "Baby Clothes", "icon": "shopping-bag"},
+    {"key": "gear", "label": "Gear", "icon": "package"},
+    {"key": "feeding", "label": "Feeding", "icon": "coffee"},
+    {"key": "toys", "label": "Toys & Books", "icon": "gift"},
+    {"key": "mom", "label": "For Mom", "icon": "heart"},
+    {"key": "other", "label": "Other", "icon": "box"},
+]
+
+
+class ShopItemCreate(BaseModel):
+    device_id: str
+    title: str
+    category: str
+    condition: str            # new / like-new / gently-used / well-loved
+    description: Optional[str] = None
+    price_type: str = "free"  # free / low-cost / trade
+    price: Optional[float] = None
+    location_label: Optional[str] = None  # freeform area name, never precise geo
+
+
+class ShopMessageCreate(BaseModel):
+    device_id: str
+    text: str
+
+
+class InterestCreate(BaseModel):
+    device_id: str
+
+
+# ----- Postpartum recovery (mom's own body, not the baby) -----
+# Warning signs sourced from the CDC's "Urgent Maternal Warning Signs"
+# public health campaign — established, factual guidance, not our own
+# clinical judgment. Presented as an informational checklist, never a
+# diagnosis: this app is not a doctor.
+RECOVERY_WARNING_SIGNS = [
+    {"key": "soaking_pad", "label": "Soaking through a pad every hour, or blood clots larger than an egg"},
+    {"key": "incision_not_healing", "label": "An incision that isn't healing, or is red, swollen, or draining"},
+    {"key": "leg_pain", "label": "A leg that's red, swollen, warm, or painful to the touch"},
+    {"key": "fever", "label": "A temperature of 100.4°F (38°C) or higher"},
+    {"key": "headache", "label": "A headache that won't go away, even with medicine — especially with vision changes"},
+    {"key": "chest_pain", "label": "Chest pain or a fast-beating heart"},
+    {"key": "trouble_breathing", "label": "Trouble breathing"},
+    {"key": "swelling", "label": "Extreme swelling in your hands, face, or legs"},
+    {"key": "overwhelming_tiredness", "label": "Overwhelming tiredness that feels like more than normal exhaustion"},
+    {"key": "self_harm_thoughts", "label": "Thoughts of harming yourself or your baby"},
+]
+
+
+class RecoveryCheckinCreate(BaseModel):
+    device_id: str
+    pain_level: Optional[int] = None       # 1-5
+    bleeding_level: Optional[str] = None   # none / light / moderate / heavy
+    incision_status: Optional[str] = None  # good / concerning / n/a
+    symptoms: List[str] = []               # keys from RECOVERY_WARNING_SIGNS
+    note: Optional[str] = None
+
+
+class ProfileApptUpdate(BaseModel):
+    device_id: str
+    postpartum_appt_done: bool
+
+
+# ----- Dad's Corner (partner postpartum wellbeing) -----
+# Uses the PHQ-2 — a short, well-validated, gender-neutral depression
+# screener (not EPDS, which was validated specifically for postpartum
+# mothers). Framed as a check-in, not a diagnosis, same as EPDS elsewhere.
+PHQ2_QUESTIONS = [
+    {"q": "Over the last 2 weeks, how often have you had little interest or pleasure in doing things?",
+     "options": [{"label": "Not at all", "score": 0}, {"label": "Several days", "score": 1},
+                 {"label": "More than half the days", "score": 2}, {"label": "Nearly every day", "score": 3}]},
+    {"q": "Over the last 2 weeks, how often have you felt down, depressed, or hopeless?",
+     "options": [{"label": "Not at all", "score": 0}, {"label": "Several days", "score": 1},
+                 {"label": "More than half the days", "score": 2}, {"label": "Nearly every day", "score": 3}]},
+]
+
+DAD_TIPS = [
+    {"title": "This is real, and it's more common than people think", "icon": "heart",
+     "body": "About 1 in 10 new fathers/partners experience postpartum depression. It's driven by real "
+             "hormonal, sleep, and identity shifts — not a personal failing."},
+    {"title": "Concrete ways to support her", "icon": "users",
+     "body": "Specific offers beat 'let me know if you need anything.' Try: 'I've got the 2am feed tonight,' "
+             "or 'I'm ordering dinner, don't worry about it.' Small, repeated, unasked-for help lands best."},
+    {"title": "Watch for it in yourself too", "icon": "eye",
+     "body": "Irritability, withdrawing from the baby or your partner, working more to avoid home, or feeling "
+             "numb are common in partners — often overlooked because they don't look like 'sadness.'"},
+    {"title": "You're allowed to need support", "icon": "life-buoy",
+     "body": "Postpartum Support International has a dedicated line for dads and partners, not just moms — "
+             "reaching out early helps more than waiting until it's unmanageable."},
+]
+
+
+class DadCheckinSubmit(BaseModel):
+    device_id: str
+    answers: List[int]
+
+
+@api_router.get("/dad-checkin/questions")
+async def dad_checkin_questions():
+    return PHQ2_QUESTIONS
+
+
+@api_router.get("/dad-tips")
+async def dad_tips():
+    return DAD_TIPS
+
+
+@api_router.post("/dad-checkin")
+async def submit_dad_checkin(sub: DadCheckinSubmit):
+    if len(sub.answers) != len(PHQ2_QUESTIONS):
+        raise HTTPException(status_code=400, detail="Both questions must be answered")
+    total = sum(sub.answers)
+    band = "low" if total <= 2 else "elevated"
+    doc = {
+        "device_id": sub.device_id, "answers": sub.answers, "total": total,
+        "band": band, "created_at": now_iso(),
+    }
+    await db.dad_checkins.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/dad-checkin/{device_id}")
+async def dad_checkin_history(device_id: str, limit: int = 20):
+    docs = await db.dad_checkins.find({"device_id": device_id}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+# ----- Baby Brain Capture (quick-jot list for postpartum memory fog) -----
+class BrainNoteCreate(BaseModel):
+    device_id: str
+    text: str
+    category: Optional[str] = None  # question / appointment / reminder / other
+
+
+@api_router.post("/brain-notes")
+async def create_brain_note(n: BrainNoteCreate):
+    doc = {
+        "device_id": n.device_id, "text": n.text, "category": n.category or "other",
+        "done": False, "created_at": now_iso(),
+    }
+    res = await db.brain_notes.insert_one(dict(doc))
+    doc["id"] = str(res.inserted_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/brain-notes/{device_id}")
+async def list_brain_notes(device_id: str, include_done: bool = False):
+    query: dict = {"device_id": device_id}
+    if not include_done:
+        query["done"] = False
+    docs = await db.brain_notes.find(query).sort("created_at", -1).to_list(200)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+    return docs
+
+
+@api_router.patch("/brain-notes/{note_id}/done")
+async def complete_brain_note(note_id: str):
+    await db.brain_notes.update_one({"_id": ObjectId(note_id)}, {"$set": {"done": True}})
+    return {"ok": True}
+
+
+@api_router.delete("/brain-notes/{note_id}")
+async def delete_brain_note(note_id: str):
+    await db.brain_notes.delete_one({"_id": ObjectId(note_id)})
+    return {"ok": True}
+
+
+def jitter_coords(lat: float, lng: float, max_miles: float = 15.0):
+    """Privacy-preserving randomization. Offsets by up to max_miles, then snaps
+    to a coarse grid cell (~2.5mi) so the result reads as a general area rather
+    than a precise point — nearby users can land in the same cell by design."""
     r = max_miles / 69.0
     u = random.random()
     w = r * math.sqrt(u)
     t = 2 * math.pi * random.random()
     dlat = w * math.cos(t)
     dlng = w * math.sin(t) / max(math.cos(math.radians(lat)), 0.1)
-    return round(lat + dlat, 5), round(lng + dlng, 5)
+    grid = 0.035  # roughly 2.5 miles per cell
+    glat = round((lat + dlat) / grid) * grid
+    glng = round((lng + dlng) / grid) * grid
+    return round(glat, 4), round(glng, 4)
 
 
 # ----- Beacon settings / profile extension -----
@@ -786,7 +987,16 @@ async def peerchat_send(room_id: str, m: PeerMessageCreate):
 # ----- Baby tracker -----
 @api_router.post("/baby-log")
 async def baby_log(b: BabyLogCreate):
-    doc = {"device_id": b.device_id, "kind": b.kind, "detail": b.detail, "at": now_iso()}
+    doc = {
+        "device_id": b.device_id,
+        "kind": b.kind,
+        "detail": b.detail,
+        "amount_ml": b.amount_ml,
+        "diaper_type": b.diaper_type,
+        "duration_minutes": b.duration_minutes,
+        "at": b.at or now_iso(),
+        "logged_at": now_iso(),  # when it was actually entered, distinct from when it happened
+    }
     await db.baby_logs.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -796,6 +1006,132 @@ async def baby_log(b: BabyLogCreate):
 async def baby_logs(device_id: str, limit: int = 50):
     docs = await db.baby_logs.find({"device_id": device_id}, {"_id": 0}).sort("at", -1).to_list(limit)
     return docs
+
+
+def _ml_to_oz(ml: float) -> float:
+    return round(ml / 29.5735, 1)
+
+
+async def _household_device_ids(device_id: str) -> List[str]:
+    """All device_ids sharing a household with this one (for combined baby
+    totals across caregivers), or just this device if no household exists."""
+    h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    if not h:
+        return [device_id]
+    return [m["device_id"] for m in h["members"]]
+
+
+@api_router.get("/baby-log/{device_id}/summary")
+async def baby_log_summary(device_id: str):
+    """Today's totals, combined across the whole household (so Dad's feeds
+    count toward the same daily total as Mom's, not two separate tallies)."""
+    device_ids = await _household_device_ids(device_id)
+    today = datetime.now(timezone.utc).date().isoformat()
+    logs = await db.baby_logs.find(
+        {"device_id": {"$in": device_ids}, "at": {"$gte": today}}, {"_id": 0}
+    ).to_list(500)
+
+    feed_logs = [l for l in logs if l["kind"] == "feed"]
+    diaper_logs = [l for l in logs if l["kind"] == "diaper"]
+    sleep_logs = [l for l in logs if l["kind"] == "sleep"]
+
+    total_ml = sum(l.get("amount_ml") or 0 for l in feed_logs)
+    pee_count = sum(1 for l in diaper_logs if l.get("diaper_type") in ("pee", "both"))
+    poop_count = sum(1 for l in diaper_logs if l.get("diaper_type") in ("poop", "both"))
+    sleep_minutes = sum(l.get("duration_minutes") or 0 for l in sleep_logs)
+
+    return {
+        "date": today,
+        "feed_count": len(feed_logs),
+        "feed_total_ml": round(total_ml, 1),
+        "feed_total_oz": _ml_to_oz(total_ml),
+        "pee_count": pee_count,
+        "poop_count": poop_count,
+        "sleep_count": len(sleep_logs),
+        "sleep_total_minutes": sleep_minutes,
+    }
+
+
+def _predict_next(logs: List[dict], min_samples: int = 2, max_samples: int = 6) -> Optional[dict]:
+    """Simple moving-average interval prediction from the caregiver's own
+    recently logged pattern — not a clinical model, just 'based on the last
+    few times, here's roughly when this tends to happen again.' Confidence
+    is stated honestly rather than implying more precision than we have."""
+    if len(logs) < min_samples:
+        return None
+    times = sorted([datetime.fromisoformat(l["at"]) for l in logs])[-max_samples - 1:]
+    intervals = [(times[i + 1] - times[i]).total_seconds() / 60 for i in range(len(times) - 1)]
+    if not intervals:
+        return None
+    avg_minutes = sum(intervals) / len(intervals)
+    last_time = times[-1]
+    predicted = last_time + timedelta(minutes=avg_minutes)
+    confidence = "steady" if len(intervals) >= 5 else ("developing" if len(intervals) >= 3 else "early")
+    return {
+        "predicted_at": predicted.isoformat(),
+        "avg_interval_minutes": round(avg_minutes),
+        "confidence": confidence,
+        "sample_size": len(intervals),
+    }
+
+
+@api_router.get("/baby-log/{device_id}/predictions")
+async def baby_log_predictions(device_id: str):
+    """'Based on your own recent logs, here's roughly when to expect the
+    next one' — for feeds, pee, and poop. Learns only from this baby's own
+    logged history, refines as more gets logged, and says so plainly when
+    there isn't enough data yet rather than guessing confidently."""
+    device_ids = await _household_device_ids(device_id)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=4)).isoformat()
+    logs = await db.baby_logs.find(
+        {"device_id": {"$in": device_ids}, "at": {"$gte": cutoff}}, {"_id": 0}
+    ).to_list(500)
+
+    feed_logs = [l for l in logs if l["kind"] == "feed"]
+    pee_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("pee", "both")]
+    poop_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("poop", "both")]
+
+    return {
+        "feed": _predict_next(feed_logs),
+        "pee": _predict_next(pee_logs, min_samples=3),
+        "poop": _predict_next(poop_logs, min_samples=2, max_samples=4),
+    }
+
+
+PLAYFUL_BALANCE_LINES = [
+    "{leader} has logged {pct}% of today's baby duties — {other}, the tag-team jersey is right there 👕",
+    "{leader}'s on a bit of a streak today ({pct}% of the logs) — {other}, MVP substitution opportunity available",
+    "Scoreboard check: {leader} {pct}%, {other} — your turn to rack up some points 😄",
+]
+
+
+@api_router.get("/handoff/balance/{household_code}")
+async def handoff_balance(household_code: str):
+    """A light, funny nudge about today's workload split — deliberately the
+    one playful voice in an otherwise gentle app, since a little humor here
+    lands better than more heavy language about who's 'behind'."""
+    h = await _get_household(household_code)
+    today = datetime.now(timezone.utc).date().isoformat()
+    logs = await db.baby_logs.find(
+        {"device_id": {"$in": [m["device_id"] for m in h["members"]]}, "at": {"$gte": today}},
+        {"_id": 0},
+    ).to_list(500)
+    if len(logs) < 4 or len(h["members"]) < 2:
+        return {"message": None}
+
+    counts: dict = {}
+    for l in logs:
+        counts[l["device_id"]] = counts.get(l["device_id"], 0) + 1
+    total = sum(counts.values())
+    leader_id = max(counts, key=counts.get)
+    leader_pct = round(counts[leader_id] / total * 100)
+    if leader_pct < 65:
+        return {"message": None}  # fairly balanced — no need to say anything
+
+    leader = next((m["name"] for m in h["members"] if m["device_id"] == leader_id), "Someone")
+    other = next((m["name"] for m in h["members"] if m["device_id"] != leader_id), "the other player")
+    line = random.choice(PLAYFUL_BALANCE_LINES).format(leader=leader, pct=leader_pct, other=other)
+    return {"message": line}
 
 
 # ----- Caregiver hand-off ("Tag Out") -----
@@ -837,6 +1173,40 @@ def _detect_emotion_signal(name: Optional[str], mood_entry: Optional[dict]) -> O
         "suggested_note": f"{who} mentioned feeling stretched thin recently — "
                            f"might be worth a gentle check-in, no pressure.",
     }
+
+
+# ----- Push notifications -----
+# Uses Expo's push service — works once the app is a real native build via EAS
+# (App Store / Play Store or an internal build). It does NOT work in a plain
+# web browser tab; browsers need a separate Web Push setup, which this
+# doesn't attempt yet. Registering a token on web is a harmless no-op.
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+
+async def send_push(device_id: str, title: str, body: str):
+    token_doc = await db.push_tokens.find_one({"device_id": device_id})
+    if not token_doc or not token_doc.get("expo_push_token"):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(EXPO_PUSH_URL, json={
+                "to": token_doc["expo_push_token"],
+                "title": title,
+                "body": body,
+                "sound": "default",
+            })
+    except Exception:
+        logger.exception("push send failed")
+
+
+@api_router.post("/push/register")
+async def register_push_token(p: PushRegister):
+    await db.push_tokens.update_one(
+        {"device_id": p.device_id},
+        {"$set": {"device_id": p.device_id, "expo_push_token": p.expo_push_token, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 
 def _make_household_code() -> str:
@@ -952,6 +1322,22 @@ async def compute_handoff_score(household: dict) -> dict:
         (m for m in household["members"] if m["device_id"] != on_duty_id), None
     )
 
+    # Nudge the OTHER caregiver — but only on the moment it first crosses into
+    # "suggest", not on every 45-second poll. Re-fires only if it later drops
+    # back down and crosses again, so it stays a nudge, not a nag.
+    if level == "suggest" and household.get("last_notified_level") != "suggest" and other_member:
+        on_duty_name = on_duty_member.get("name") if on_duty_member else "They"
+        await send_push(
+            other_member["device_id"],
+            "Cuddle · Tag Team",
+            f"{on_duty_name} has been on it for a while — might be a good time to check in or take over.",
+        )
+    if level != household.get("last_notified_level"):
+        await db.households.update_one(
+            {"household_code": household["household_code"]},
+            {"$set": {"last_notified_level": level}},
+        )
+
     return {
         "score": score,
         "level": level,
@@ -1046,6 +1432,261 @@ async def guides(culture: Optional[str] = None):
             item["featured_variant"] = None
         out.append(item)
     return out
+
+
+# ----- Give & Share -----
+@api_router.get("/shop/categories")
+async def shop_categories():
+    return SHOP_CATEGORIES
+
+
+@api_router.post("/shop/items")
+async def create_shop_item(item: ShopItemCreate):
+    doc = item.model_dump()
+    doc["created_at"] = now_iso()
+    doc["claimed"] = False
+    res = await db.shop_items.insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/shop/items")
+async def list_shop_items(category: Optional[str] = None, device_id: Optional[str] = None):
+    query: dict = {"claimed": False}
+    if category and category != "all":
+        query["category"] = category
+    if device_id:
+        # "mine" view — a poster's own listings, including claimed ones
+        query = {"device_id": device_id}
+    docs = await db.shop_items.find(query).sort("created_at", -1).to_list(200)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+    return docs
+
+
+@api_router.get("/shop/items/{item_id}")
+async def get_shop_item(item_id: str):
+    doc = await db.shop_items.find_one({"_id": ObjectId(item_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+
+@api_router.patch("/shop/items/{item_id}/claim")
+async def claim_shop_item(item_id: str):
+    await db.shop_items.update_one({"_id": ObjectId(item_id)}, {"$set": {"claimed": True}})
+    return {"ok": True}
+
+
+@api_router.delete("/shop/items/{item_id}")
+async def delete_shop_item(item_id: str):
+    await db.shop_items.delete_one({"_id": ObjectId(item_id)})
+    return {"ok": True}
+
+
+@api_router.post("/shop/items/{item_id}/interest")
+async def express_interest(item_id: str, body: InterestCreate):
+    """Starts (or resumes) a private thread between an interested caregiver
+    and the person who posted the item. One thread per interested device
+    per item, so repeated taps don't spawn duplicate conversations."""
+    device_id = body.device_id
+    item = await db.shop_items.find_one({"_id": ObjectId(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    existing = await db.shop_threads.find_one({"item_id": item_id, "interested_device_id": device_id})
+    if existing:
+        return {"thread_id": str(existing["_id"])}
+    doc = {
+        "item_id": item_id,
+        "item_title": item.get("title"),
+        "poster_device_id": item.get("device_id"),
+        "interested_device_id": device_id,
+        "created_at": now_iso(),
+    }
+    res = await db.shop_threads.insert_one(doc)
+    thread_id = str(res.inserted_id)
+    await db.shop_thread_messages.insert_one({
+        "thread_id": thread_id, "device_id": device_id,
+        "text": f"Hi! I'm interested in \"{item.get('title')}\" — is it still available?",
+        "created_at": now_iso(),
+    })
+    return {"thread_id": thread_id}
+
+
+@api_router.get("/shop/threads/{device_id}")
+async def my_shop_threads(device_id: str):
+    docs = await db.shop_threads.find(
+        {"$or": [{"poster_device_id": device_id}, {"interested_device_id": device_id}]}
+    ).sort("created_at", -1).to_list(100)
+    for d in docs:
+        d["id"] = str(d.pop("_id"))
+        d["am_poster"] = d["poster_device_id"] == device_id
+    return docs
+
+
+@api_router.get("/shop/thread/{thread_id}")
+async def shop_thread_messages(thread_id: str):
+    thread = await db.shop_threads.find_one({"_id": ObjectId(thread_id)})
+    if not thread:
+        raise HTTPException(status_code=404, detail="Not found")
+    thread["id"] = str(thread.pop("_id"))
+    msgs = await db.shop_thread_messages.find({"thread_id": thread_id}, {"_id": 0}).sort("created_at", 1).to_list(300)
+    return {"thread": thread, "messages": msgs}
+
+
+@api_router.post("/shop/thread/{thread_id}")
+async def send_shop_message(thread_id: str, m: ShopMessageCreate):
+    await db.shop_thread_messages.insert_one({
+        "thread_id": thread_id, "device_id": m.device_id, "text": m.text, "created_at": now_iso(),
+    })
+    return {"ok": True}
+
+
+# ----- Postpartum recovery -----
+@api_router.get("/recovery/warning-signs")
+async def recovery_warning_signs():
+    return RECOVERY_WARNING_SIGNS
+
+
+@api_router.post("/recovery/checkin")
+async def recovery_checkin(c: RecoveryCheckinCreate):
+    doc = c.model_dump()
+    doc["created_at"] = now_iso()
+    has_warning = len(c.symptoms) > 0
+    doc["has_warning_sign"] = has_warning
+    await db.recovery_checkins.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/recovery/checkins/{device_id}")
+async def recovery_checkins(device_id: str, limit: int = 30):
+    docs = await db.recovery_checkins.find({"device_id": device_id}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
+
+
+@api_router.get("/recovery/today/{device_id}")
+async def recovery_today(device_id: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    doc = await db.recovery_checkins.find_one(
+        {"device_id": device_id, "created_at": {"$regex": f"^{today}"}}, {"_id": 0})
+    return {"done": doc is not None, "entry": doc}
+
+
+@api_router.patch("/profile/appointment")
+async def update_appointment(u: ProfileApptUpdate):
+    await db.profiles.update_one(
+        {"device_id": u.device_id},
+        {"$set": {"postpartum_appt_done": u.postpartum_appt_done}},
+    )
+    return {"ok": True}
+
+
+# ----- Meal support -----
+class MealTrainCreate(BaseModel):
+    device_id: str
+    title: str
+    notes: Optional[str] = None  # allergies, delivery instructions, preferences
+
+
+class MealSlotCreate(BaseModel):
+    date: str              # ISO date (day only)
+    giver_name: str
+    giver_contact: Optional[str] = None
+    meal_description: Optional[str] = None
+
+
+class MealCheckinCreate(BaseModel):
+    device_id: str
+    ate_today: bool
+
+
+def _meal_train_code() -> str:
+    return uuid.uuid4().hex[:6].upper()
+
+
+@api_router.post("/mealtrain")
+async def create_meal_train(m: MealTrainCreate):
+    code = _meal_train_code()
+    doc = {
+        "meal_train_code": code,
+        "device_id": m.device_id,
+        "title": m.title,
+        "notes": m.notes,
+        "created_at": now_iso(),
+    }
+    await db.meal_trains.insert_one(dict(doc))
+    return doc
+
+
+@api_router.get("/mealtrain/by-device/{device_id}")
+async def meal_train_for_device(device_id: str):
+    doc = await db.meal_trains.find_one({"device_id": device_id}, {"_id": 0})
+    return doc
+
+
+@api_router.get("/mealtrain/{code}")
+async def get_meal_train(code: str):
+    doc = await db.meal_trains.find_one({"meal_train_code": code}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Meal train not found")
+    slots = await db.meal_slots.find({"meal_train_code": code}).sort("date", 1).to_list(200)
+    for s in slots:
+        s["id"] = str(s.pop("_id"))
+        s.pop("slot_token", None)  # never expose other people's cancel tokens
+    return {"train": doc, "slots": slots}
+
+
+@api_router.post("/mealtrain/{code}/slots")
+async def sign_up_meal_slot(code: str, s: MealSlotCreate):
+    train = await db.meal_trains.find_one({"meal_train_code": code})
+    if not train:
+        raise HTTPException(status_code=404, detail="Meal train not found")
+    existing = await db.meal_slots.find_one({"meal_train_code": code, "date": s.date})
+    if existing:
+        raise HTTPException(status_code=409, detail="That date is already taken")
+    slot_token = uuid.uuid4().hex  # lets the signer cancel later without needing an account
+    doc = {
+        "meal_train_code": code,
+        "date": s.date,
+        "giver_name": s.giver_name,
+        "giver_contact": s.giver_contact,
+        "meal_description": s.meal_description,
+        "slot_token": slot_token,
+        "created_at": now_iso(),
+    }
+    res = await db.meal_slots.insert_one(dict(doc))
+    doc["id"] = str(res.inserted_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/mealtrain/{code}/slots/{slot_id}")
+async def cancel_meal_slot(code: str, slot_id: str, slot_token: str):
+    slot = await db.meal_slots.find_one({"_id": ObjectId(slot_id), "meal_train_code": code})
+    if not slot or slot.get("slot_token") != slot_token:
+        raise HTTPException(status_code=403, detail="Can't cancel this slot")
+    await db.meal_slots.delete_one({"_id": ObjectId(slot_id)})
+    return {"ok": True}
+
+
+@api_router.post("/meal-checkin")
+async def meal_checkin(c: MealCheckinCreate):
+    today = datetime.now(timezone.utc).date().isoformat()
+    doc = {"device_id": c.device_id, "date": today, "ate_today": c.ate_today, "created_at": now_iso()}
+    await db.meal_checkins.update_one(
+        {"device_id": c.device_id, "date": today}, {"$set": doc}, upsert=True,
+    )
+    return doc
+
+
+@api_router.get("/meal-checkin/{device_id}/today")
+async def meal_checkin_today(device_id: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    doc = await db.meal_checkins.find_one({"device_id": device_id, "date": today}, {"_id": 0})
+    return {"done": doc is not None, "entry": doc}
 
 
 app.include_router(api_router)

@@ -37,6 +37,23 @@ export const colors = {
   roleNeutralTint: "#F4F1EB",
 };
 
+// Soft, low-saturation accent per caregiver role — shared between the Tag
+// Team card and the app-wide ambient background. Deliberately gentle:
+// this shifts the mood of the app slightly, never overwhelms it.
+export function roleAccent(role?: string | null) {
+  const r = (role || "").toLowerCase();
+  if (r.includes("mom") || r.includes("mother") || r === "primary") {
+    return { fg: colors.roleMom, tint: colors.roleMomTint };
+  }
+  if (r.includes("dad") || r.includes("father") || r === "partner") {
+    return { fg: colors.roleDad, tint: colors.roleDadTint };
+  }
+  if (r) {
+    return { fg: colors.roleNeutral, tint: colors.roleNeutralTint };
+  }
+  return null;
+}
+
 export const spacing = {
   xs: 4,
   sm: 8,

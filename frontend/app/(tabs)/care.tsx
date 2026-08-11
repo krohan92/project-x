@@ -3,15 +3,19 @@ import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 
 import { Txt, Card } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
+import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
 
 export default function Care() {
+  const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { profile } = useProfile();
   const { t } = useT();
 
@@ -47,7 +51,7 @@ export default function Care() {
   const support = helplines.filter((h) => h.type !== "crisis");
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <Txt display style={styles.title}>Care & Support</Txt>
         <Txt style={{ color: colors.muted }}>You are never alone in this</Txt>
@@ -57,6 +61,65 @@ export default function Care() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Practical support */}
+        <Txt display style={styles.sectionTitle}>Practical support</Txt>
+        <Pressable testID="care-meal-train" onPress={() => router.push("/meals")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: colors.brandTertiary + "50" }]}>
+              <Feather name="coffee" size={20} color={colors.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Meal Train</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Let people bring you food — share a link, no app needed on their end
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
+        <Pressable testID="care-recovery" onPress={() => router.push("/recovery")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#E3B3B3" + "60" }]}>
+              <Feather name="activity" size={20} color="#B23B3B" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Body recovery check-in</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                How you're healing — not just the baby
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
+        <Pressable testID="care-give-share" onPress={() => router.push("/shop")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: colors.brandSecondary + "40" }]}>
+              <Feather name="gift" size={20} color={colors.onBrandSecondary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Give & Share</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Free & low-cost baby things, mom to mom
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
+        <Pressable testID="care-dad-corner" onPress={() => router.push("/dad-corner")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#93B4D6" + "50" }]}>
+              <Feather name="user" size={20} color="#4C6E8F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Dad's Corner</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Postpartum support isn't just for moms
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
+
         {/* Crisis */}
         <Txt display style={styles.sectionTitle}>If you need help right now</Txt>
         {crisis.map((h) => (

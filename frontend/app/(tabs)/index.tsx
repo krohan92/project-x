@@ -10,18 +10,46 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
+import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { isNightTime } from "@/src/lib/night";
 
 const HERO_BG =
   "https://images.unsplash.com/photo-1772984711070-5c7e0d54026b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwyfHxzb2Z0JTIwd2F0ZXJjb2xvciUyMGFic3RyYWN0JTIwYmFja2dyb3VuZCUyMHdhcm0lMjBzdW5saWdodHxlbnwwfHx8fDE3ODI4NzI5OTh8MA&ixlib=rb-4.1.0&q=85";
 
-const MOOD_EMOJI = ["😔", "😟", "😐", "🙂", "😊"];
+const MOOD_GRADIENTS: [string, string][] = [
+  ["#B9C4CE", "#98A6B3"],
+  ["#B7C6D6", "#9FB6CC"],
+  ["#D9CBB8", "#CBB495"],
+  ["#E8B9A0", "#E39A78"],
+  ["#EFA98D", "#E8825C"],
+];
+
+// The "you checked in today" message now reflects what she actually logged.
+function checkinReflection(entry: any): string {
+  const mood = entry?.mood as number | undefined;
+  const tags: string[] = entry?.tags || [];
+  if (tags.includes("Overwhelmed") || mood === 1) {
+    return "Today sounded like a lot. Be extra gentle with yourself right now.";
+  }
+  if (tags.includes("Tired") || (entry?.sleep_hours != null && entry.sleep_hours <= 4)) {
+    return "Running on little sleep today — even a short rest counts.";
+  }
+  if (mood === 2) {
+    return "A harder day. Thank you for showing up for yourself anyway.";
+  }
+  if (mood === 5 || tags.includes("Grateful") || tags.includes("Proud")) {
+    return "Sounds like a good one — hold onto this feeling for later.";
+  }
+  return "Thank you for taking a moment for yourself today.";
+}
 
 function greeting() {
   const h = new Date().getHours();
@@ -31,6 +59,7 @@ function greeting() {
 }
 
 export default function Home() {
+  const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile } = useProfile();
@@ -40,19 +69,35 @@ export default function Home() {
   const [todayMood, setTodayMood] = useState<any | null>(null);
   const [checkedToday, setCheckedToday] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [apptDismissed, setApptDismissed] = useState(false);
+  const [ateToday, setAteToday] = useState<boolean | null>(null);
+  const [mealCheckDone, setMealCheckDone] = useState(true);
+
+  const daysSinceDelivery = profile?.delivery_date
+    ? Math.floor((Date.now() - new Date(profile.delivery_date).getTime()) / 86400000)
+    : null;
+  const showApptReminder =
+    !profile?.postpartum_appt_done &&
+    !apptDismissed &&
+    daysSinceDelivery != null &&
+    daysSinceDelivery >= 38 &&
+    daysSinceDelivery <= 70;
 
   const load = useCallback(async () => {
     if (!profile) return;
     try {
-      const [q, t, mt] = await Promise.all([
+      const [q, t, mt, meal] = await Promise.all([
         api.quote(),
         api.tips(),
         api.moodToday(profile.device_id),
+        api.mealCheckinToday(profile.device_id),
       ]);
       setQuote(q);
       setTips(t);
       setCheckedToday(mt.done);
       setTodayMood(mt.entry);
+      setMealCheckDone(meal.done);
+      setAteToday(meal.entry?.ate_today ?? null);
     } catch {}
   }, [profile]);
 
@@ -68,6 +113,20 @@ export default function Home() {
     setRefreshing(false);
   };
 
+  const markApptDone = async () => {
+    if (!profile?.device_id) return;
+    await api.updateAppointment(profile.device_id, true);
+    setApptDismissed(true);
+  };
+
+  const markAteToday = async (ate: boolean) => {
+    if (!profile?.device_id) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await api.mealCheckin(profile.device_id, ate);
+    setMealCheckDone(true);
+    setAteToday(ate);
+  };
+
   const dateStr = new Date().toLocaleDateString(undefined, {
     weekday: "long",
     month: "long",
@@ -75,7 +134,7 @@ export default function Home() {
   });
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: ambientTint }}>
       {/* Sticky header */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View>
@@ -101,33 +160,59 @@ export default function Home() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
         }
       >
-        {/* Hero quote */}
-        <Animated.View entering={FadeInDown.duration(500)}>
-          <View style={styles.hero} testID="daily-quote-card">
-            <Image source={HERO_BG} style={StyleSheet.absoluteFill} contentFit="cover" />
-            <LinearGradient
-              colors={["rgba(44,41,37,0.1)", "rgba(44,41,37,0.55)", "rgba(44,41,37,0.9)"]}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.heroContent}>
-              <Txt style={styles.heroKicker}>A THOUGHT FOR TODAY</Txt>
-              <Txt display style={styles.heroQuote}>
-                {quote ? `"${quote.text}"` : "Loading a gentle thought..."}
-              </Txt>
-              {quote && <Txt style={styles.heroAuthor}>— {quote.author}</Txt>}
+        {/* Hero quote — or, late at night, a quieter invitation instead */}
+        {isNightTime() ? (
+          <Animated.View entering={FadeInDown.duration(500)}>
+            <Pressable testID="night-light-cta" onPress={() => router.push("/night-light")}>
+              <View style={styles.nightHero}>
+                <LinearGradient
+                  colors={["#211E2C", "#2B2438", "#332B47"]}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.heroContent}>
+                  <Txt style={styles.nightKicker}>IT'S LATE</Txt>
+                  <Txt display style={styles.nightTitle}>
+                    Awake with the baby? There's a quiet place for that.
+                  </Txt>
+                  <View style={styles.nightCta}>
+                    <Feather name="star" size={14} color="#F3D9A4" />
+                    <Txt style={styles.nightCtaText}>Open Night Light</Txt>
+                  </View>
+                </View>
+              </View>
+            </Pressable>
+          </Animated.View>
+        ) : (
+          <Animated.View entering={FadeInDown.duration(500)}>
+            <View style={styles.hero} testID="daily-quote-card">
+              <Image source={HERO_BG} style={StyleSheet.absoluteFill} contentFit="cover" />
+              <LinearGradient
+                colors={["rgba(44,41,37,0.1)", "rgba(44,41,37,0.55)", "rgba(44,41,37,0.9)"]}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.heroContent}>
+                <Txt style={styles.heroKicker}>A THOUGHT FOR TODAY</Txt>
+                <Txt display style={styles.heroQuote}>
+                  {quote ? `"${quote.text}"` : "Loading a gentle thought..."}
+                </Txt>
+                {quote && <Txt style={styles.heroAuthor}>— {quote.author}</Txt>}
+              </View>
             </View>
-          </View>
-        </Animated.View>
+          </Animated.View>
+        )}
 
         {/* Mood check-in */}
         <Animated.View entering={FadeInDown.delay(100).duration(500)}>
           {checkedToday && todayMood ? (
             <Card style={styles.moodDone} testID="mood-done-card">
-              <Txt style={{ fontSize: 40 }}>{MOOD_EMOJI[(todayMood.mood || 1) - 1]}</Txt>
+              <LinearGradient
+                colors={MOOD_GRADIENTS[(todayMood.mood || 1) - 1]}
+                style={styles.moodDoneBlob}
+              />
               <View style={{ flex: 1 }}>
                 <Txt display style={{ fontSize: fontSize.xl }}>You checked in today</Txt>
                 <Txt style={{ color: colors.onSurfaceTertiary, marginTop: 2 }}>
-                  Thank you for taking a moment for yourself. 🤍
+                  {checkinReflection(todayMood)}
                 </Txt>
               </View>
               <Pressable onPress={() => router.push("/checkin")} hitSlop={10} testID="update-mood-button">
@@ -153,6 +238,54 @@ export default function Home() {
           )}
         </Animated.View>
 
+        {/* Have you eaten today? */}
+        {!mealCheckDone && (
+          <Animated.View entering={FadeInDown.delay(120).duration(500)}>
+            <Card style={styles.mealCard} testID="meal-checkin-card">
+              <Feather name="coffee" size={20} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Txt weight="500">Have you eaten today?</Txt>
+                <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: 2 }}>
+                  Easy to forget when you're this busy taking care of everyone else.
+                </Txt>
+              </View>
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <Pressable onPress={() => markAteToday(true)} style={styles.mealYesBtn}>
+                  <Txt style={{ color: colors.onBrandPrimary, fontSize: fontSize.sm }} weight="500">Yes</Txt>
+                </Pressable>
+                <Pressable onPress={() => markAteToday(false)} style={styles.mealNoBtn}>
+                  <Txt style={{ color: colors.onSurfaceSecondary, fontSize: fontSize.sm }}>Not yet</Txt>
+                </Pressable>
+              </View>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* 6-week postpartum appointment reminder */}
+        {showApptReminder && (
+          <Animated.View entering={FadeInDown.delay(150).duration(500)}>
+            <Card style={styles.apptCard} testID="appt-reminder-card">
+              <View style={[styles.linkIcon, { backgroundColor: "#E3B3B3" + "60" }]}>
+                <Feather name="calendar" size={20} color="#B23B3B" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Txt weight="500">Your postpartum check-up</Txt>
+                <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                  Around 6 weeks out is when providers usually want to see you — worth booking if you haven't.
+                </Txt>
+                <View style={{ flexDirection: "row", gap: spacing.lg, marginTop: spacing.sm }}>
+                  <Pressable onPress={markApptDone}>
+                    <Txt style={{ color: colors.brand, fontSize: fontSize.sm }} weight="500">I've done this</Txt>
+                  </Pressable>
+                  <Pressable onPress={() => setApptDismissed(true)}>
+                    <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Remind me later</Txt>
+                  </Pressable>
+                </View>
+              </View>
+            </Card>
+          </Animated.View>
+        )}
+
         {/* Quick actions */}
         <Animated.View entering={FadeInDown.delay(200).duration(500)} style={styles.quickRow}>
           <Pressable style={styles.quickCard} testID="quick-talk" onPress={() => router.push("/talk")}>
@@ -168,6 +301,19 @@ export default function Home() {
             </View>
             <Txt weight="500">Wellbeing check</Txt>
             <Txt style={styles.quickSub}>A validated self-check-in</Txt>
+          </Pressable>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(230).duration(500)}>
+          <Pressable testID="quick-brain-notes" onPress={() => router.push("/brain-notes")}>
+            <Card style={styles.brainBanner}>
+              <Feather name="feather" size={18} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Txt weight="500">Baby Brain Capture</Txt>
+                <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Jot it down before it's gone</Txt>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.muted} />
+            </Card>
           </Pressable>
         </Animated.View>
 
@@ -234,6 +380,31 @@ const styles = StyleSheet.create({
     lineHeight: 28,
   },
   heroAuthor: { color: "rgba(253,251,247,0.75)", marginTop: spacing.sm },
+  nightHero: {
+    height: 190,
+    borderRadius: radius.lg,
+    overflow: "hidden",
+    justifyContent: "flex-end",
+    marginBottom: spacing.lg,
+  },
+  nightKicker: {
+    color: "#F3D9A4",
+    fontSize: 11,
+    letterSpacing: 2,
+    marginBottom: spacing.sm,
+  },
+  nightTitle: {
+    color: "rgba(253,251,247,0.92)",
+    fontSize: fontSize.lg,
+    lineHeight: 25,
+  },
+  nightCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.md,
+  },
+  nightCtaText: { color: "#F3D9A4", fontSize: fontSize.sm, fontWeight: "600" as const },
   checkinCta: {
     flexDirection: "row",
     alignItems: "center",
@@ -253,6 +424,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
   },
+  apptCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.md,
+    backgroundColor: "#F7E4E4",
+    borderColor: "#E3B3B3",
+  },
+  mealCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  mealYesBtn: {
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  mealNoBtn: {
+    backgroundColor: colors.surfaceSecondary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  brainBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  moodDoneBlob: { width: 44, height: 44, borderRadius: radius.pill },
   quickRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },
   quickCard: {
     flex: 1,

@@ -17,6 +17,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Txt, Card, Button } from "@/src/components/ui";
 import { PresenceMap } from "@/src/components/PresenceMap";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
+import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
@@ -28,6 +29,7 @@ const PREF_LABEL: Record<string, string> = {
 };
 
 export default function Beacon() {
+  const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile, deviceId } = useProfile();
@@ -115,7 +117,7 @@ export default function Beacon() {
   const pref = profile?.matching_preference || "none";
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View style={{ flex: 1 }}>
           <Txt display style={styles.title}>{t("beacon.title")}</Txt>

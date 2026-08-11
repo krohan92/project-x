@@ -6,6 +6,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
+import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 
@@ -31,6 +32,7 @@ const BANDS: Record<string, { label: string; color: string; note: string }> = {
 };
 
 export default function Journey() {
+  const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile } = useProfile();
@@ -71,7 +73,7 @@ export default function Journey() {
   const latestEpds = epds[0];
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <Txt display style={styles.title}>Your Journey</Txt>
         <Txt style={{ color: colors.muted }}>Gentle patterns over time — never a judgment</Txt>

@@ -15,6 +15,7 @@ import { useFonts } from "expo-font";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ProfileProvider } from "@/src/lib/profile-context";
 import { LanguageProvider } from "@/src/lib/i18n";
+import { AmbientProvider } from "@/src/lib/ambient-context";
 import { colors } from "@/src/theme/theme";
 
 // Disable logbox errors etc so that users can see the app
@@ -46,6 +47,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ProfileProvider>
+          <AmbientProvider>
           <LanguageProvider>
             <WebFrame>
               <Stack
@@ -71,14 +73,29 @@ export default function RootLayout() {
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}
                 />
                 <Stack.Screen
+                  name="night-light"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
+                <Stack.Screen
                   name="beacon-settings"
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}
                 />
                 <Stack.Screen name="thread/[id]" />
                 <Stack.Screen name="peer/[room]" />
+                <Stack.Screen name="join/[code]" />
+                <Stack.Screen name="shop" />
+                <Stack.Screen name="shop-item/[id]" />
+                <Stack.Screen name="shop-thread/[id]" />
+                <Stack.Screen name="shop-threads" />
+                <Stack.Screen name="recovery" />
+                <Stack.Screen name="meals/index" />
+                <Stack.Screen name="meals/[code]" />
+                <Stack.Screen name="dad-corner" />
+                <Stack.Screen name="brain-notes" />
               </Stack>
             </WebFrame>
           </LanguageProvider>
+          </AmbientProvider>
         </ProfileProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

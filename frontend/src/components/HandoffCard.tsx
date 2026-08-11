@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, TextInput, Pressable } from "react-native";
+import { View, StyleSheet, TextInput, Pressable, Share, Platform } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -7,6 +7,41 @@ import { Txt, Card, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { registerForPushNotifications } from "@/src/lib/push-notifications";
+
+function appBaseUrl() {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return null; // native build without a known web URL — code-only sharing still works
+}
+
+async function shareInvite(code: string, onCopied: () => void) {
+  const base = appBaseUrl();
+  const link = base ? `${base}/join/${code}` : null;
+  const message = link
+    ? `Join me on Cuddle so we can tag-team caring for the baby. Tap this link and it'll walk you through it: ${link}\n\n(Or open Cuddle and enter code ${code})`
+    : `Join me on Cuddle so we can tag-team caring for the baby. Open Cuddle and enter this code: ${code}`;
+
+  try {
+    if (Platform.OS !== "web") {
+      await Share.share({ message });
+      return;
+    }
+    // Web: use the native share sheet if the browser supports it (most mobile
+    // browsers do), otherwise fall back to copying the link to the clipboard.
+    if (typeof navigator !== "undefined" && (navigator as any).share) {
+      await (navigator as any).share({ title: "Join me on Cuddle", text: message });
+      return;
+    }
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(message);
+      onCopied();
+    }
+  } catch {
+    // user cancelled the share sheet — not an error
+  }
+}
 
 const LEVEL_COLOR: Record<string, string> = {
   steady: colors.success,
@@ -52,6 +87,7 @@ export function HandoffCard() {
   const [codeInput, setCodeInput] = useState("");
   const [selectedRole, setSelectedRole] = useState("mom");
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     if (!deviceId) return;
@@ -61,6 +97,8 @@ export function HandoffCard() {
       if (h) {
         const s = await api.handoffScore(h.household_code);
         setScore(s);
+        // Best-effort — silently no-ops on web / without a native build.
+        registerForPushNotifications(deviceId);
       }
     } catch {
       // no household yet, or transient error — safe to ignore, shows setup state
@@ -186,6 +224,19 @@ export function HandoffCard() {
             {household.household_code}
           </Txt>
         </View>
+        <Button
+          label={copied ? "Copied — paste it in a text" : "Share invite"}
+          variant="secondary"
+          onPress={() => shareInvite(household.household_code, () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2500);
+          })}
+        />
+        <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+          If they already have Cuddle, they can just type in the code. If not, the link walks
+          them to a page where they enter it themselves after installing — either way, no
+          account or login needed.
+        </Txt>
       </Card>
     );
   }
@@ -252,6 +303,11 @@ export function HandoffCard() {
       {isMeOnDuty && (
         <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
           You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
+        </Txt>
+      )}
+      {Platform.OS === "web" && (
+        <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>
+          Push nudges need the phone app (not this web version) — this card still updates live either way.
         </Txt>
       )}
     </Card>

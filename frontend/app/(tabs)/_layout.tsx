@@ -4,9 +4,11 @@ import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
 import { colors, fonts } from "@/src/theme/theme";
 import { useT } from "@/src/lib/i18n";
+import { useAmbient } from "@/src/lib/ambient-context";
 
 export default function TabLayout() {
   const { t } = useT();
+  const { tint: ambientTint } = useAmbient();
   return (
     <Tabs
       screenOptions={{
@@ -14,7 +16,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
-          backgroundColor: colors.surface,
+          backgroundColor: ambientTint,
           borderTopColor: colors.border,
           borderTopWidth: 1,
           height: Platform.OS === "ios" ? 88 : 64,
