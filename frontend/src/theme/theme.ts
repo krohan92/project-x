@@ -27,6 +27,14 @@ export const colors = {
   borderStrong: "#D5C8B2",
   divider: "#EAE3D6",
   muted: "#8A8178",
+  // Soft, low-saturation role accents for the Tag Team hand-off feature.
+  // Pastel by design — an accent, not a loud UI shift, to keep the app calm.
+  roleMom: "#E8A9BC",
+  roleMomTint: "#FBEEF2",
+  roleDad: "#93B4D6",
+  roleDadTint: "#EDF3FA",
+  roleNeutral: "#B6AFA3",
+  roleNeutralTint: "#F4F1EB",
 };
 
 export const spacing = {

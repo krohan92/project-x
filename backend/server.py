@@ -807,6 +807,37 @@ async def baby_logs(device_id: str, limit: int = 50):
 NIGHT_START_HOUR = 21   # 9pm
 NIGHT_END_HOUR = 7      # 7am
 
+# Soft, non-diagnostic phrase list used only to surface a gentle nudge —
+# never shown as a label or diagnosis, just used to shape a supportive message.
+_DISTRESS_PHRASES = [
+    "exhausted", "overwhelmed", "can't do this", "cant do this", "touched out",
+    "so tired", "burnt out", "burned out", "no break", "need a break",
+    "need help", "at my limit", "running on empty", "can't keep up",
+    "cant keep up", "alone in this", "crying", "falling apart",
+]
+
+
+def _detect_emotion_signal(name: Optional[str], mood_entry: Optional[dict]) -> Optional[dict]:
+    """Looks at the on-duty caregiver's own words (their optional note, or
+    low mood/energy tags) and — only if something stands out — offers a
+    softly-worded suggestion. Never a diagnosis, never shown as a score."""
+    if not mood_entry:
+        return None
+    text = " ".join(
+        filter(None, [mood_entry.get("note"), " ".join(mood_entry.get("tags", []))])
+    ).lower()
+    if not text:
+        return None
+    hit = next((p for p in _DISTRESS_PHRASES if p in text), None)
+    if not hit:
+        return None
+    who = name or "They"
+    return {
+        "detected": True,
+        "suggested_note": f"{who} mentioned feeling stretched thin recently — "
+                           f"might be worth a gentle check-in, no pressure.",
+    }
+
 
 def _make_household_code() -> str:
     return uuid.uuid4().hex[:6].upper()
@@ -887,21 +918,32 @@ async def compute_handoff_score(household: dict) -> dict:
     energy = latest_mood.get("energy") if latest_mood else None
     mood = latest_mood.get("mood") if latest_mood else None
 
+    on_duty_member = next(
+        (m for m in household["members"] if m["device_id"] == on_duty_id), None
+    )
+    emotion_signal = _detect_emotion_signal(
+        on_duty_member.get("name") if on_duty_member else None, latest_mood
+    )
+
     # --- weighted scoring (each component capped so no single factor dominates) ---
     duty_points = min(hours_on_duty * 6, 40)                       # long stretch on duty
     interruption_points = min(interruption_count * 5, 25)          # frequency of interruptions
     night_points = min(night_interruptions * 4, 20)                # overnight is harder
     energy_points = max(0, (3 - energy) * 6) if energy is not None else 0   # low self-reported energy
     mood_points = max(0, (3 - mood) * 4) if mood is not None else 0        # low self-reported mood
+    emotion_points = 8 if emotion_signal else 0                    # gentle nudge, not a big swing
 
-    score = round(min(duty_points + interruption_points + night_points + energy_points + mood_points, 100))
+    score = round(min(
+        duty_points + interruption_points + night_points + energy_points + mood_points + emotion_points,
+        100,
+    ))
 
     if score >= 60:
         level = "suggest"
-        message = "It's been a long stretch. This looks like a good moment for someone else to take over."
+        message = "It's been a long stretch — could be a nice moment for a switch, whenever works."
     elif score >= 35:
         level = "check_in"
-        message = "Things are adding up a bit — a check-in or a short break could help."
+        message = "Things are adding up a little. A short check-in or break might help."
     else:
         level = "steady"
         message = "Things look steady right now."
@@ -915,8 +957,10 @@ async def compute_handoff_score(household: dict) -> dict:
         "level": level,
         "message": message,
         "on_duty_device_id": on_duty_id,
+        "on_duty_role": on_duty_member.get("role") if on_duty_member else None,
         "hours_on_duty": round(hours_on_duty, 1),
         "suggested_next": other_member,
+        "emotion_signal": emotion_signal,
         "breakdown": {
             "hours_on_duty": round(hours_on_duty, 1),
             "interruptions_since_shift_start": interruption_count,

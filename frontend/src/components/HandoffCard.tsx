@@ -20,6 +20,25 @@ const LEVEL_LABEL: Record<string, string> = {
   suggest: "Good time to tag out",
 };
 
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "mom", label: "Mom" },
+  { value: "dad", label: "Dad" },
+  { value: "caregiver", label: "Caregiver" },
+];
+
+// Soft pastel accent by role — kept subtle on purpose so the app stays calm,
+// this is an accent touch, not a full re-theme.
+function roleAccent(role?: string | null) {
+  const r = (role || "").toLowerCase();
+  if (r.includes("mom") || r.includes("mother") || r === "primary") {
+    return { fg: colors.roleMom, tint: colors.roleMomTint };
+  }
+  if (r.includes("dad") || r.includes("father") || r === "partner") {
+    return { fg: colors.roleDad, tint: colors.roleDadTint };
+  }
+  return { fg: colors.roleNeutral, tint: colors.roleNeutralTint };
+}
+
 export function HandoffCard() {
   const { deviceId, profile } = useProfile();
 
@@ -31,6 +50,7 @@ export function HandoffCard() {
   // setup form state
   const [mode, setMode] = useState<"create" | "join" | null>(null);
   const [codeInput, setCodeInput] = useState("");
+  const [selectedRole, setSelectedRole] = useState("mom");
   const [showBreakdown, setShowBreakdown] = useState(false);
 
   const load = useCallback(async () => {
@@ -58,6 +78,7 @@ export function HandoffCard() {
       const h = await api.createHousehold({
         device_id: deviceId,
         name: profile?.name || "Me",
+        role: selectedRole,
       });
       setHousehold(h);
       setMode(null);
@@ -73,6 +94,7 @@ export function HandoffCard() {
         device_id: deviceId,
         household_code: codeInput.trim().toUpperCase(),
         name: profile?.name || "Partner",
+        role: selectedRole,
       });
       setHousehold(h);
       setMode(null);
@@ -114,6 +136,8 @@ export function HandoffCard() {
           it might be a good time to switch off.
         </Txt>
 
+        <RolePicker selected={selectedRole} onSelect={setSelectedRole} />
+
         {mode === null && (
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Button label="Start a household" onPress={() => setMode("create")} style={{ flex: 1 }} />
@@ -149,10 +173,11 @@ export function HandoffCard() {
 
   // ---- Household set up but only one member so far ----
   if (household.members.length < 2) {
+    const meAccent = roleAccent(household.members.find((m: any) => m.device_id === deviceId)?.role);
     return (
-      <Card style={{ gap: spacing.sm }}>
+      <Card style={{ gap: spacing.sm, backgroundColor: meAccent.tint, borderColor: meAccent.fg + "40", borderWidth: 1 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <Feather name="repeat" size={20} color={colors.brand} />
+          <View style={[styles.avatarDot, { backgroundColor: meAccent.fg }]} />
           <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
         </View>
         <Txt style={{ color: colors.muted }}>Share this code with your partner or caregiver:</Txt>
@@ -169,11 +194,12 @@ export function HandoffCard() {
   const onDutyMember = household.members.find((m: any) => m.device_id === score?.on_duty_device_id);
   const isMeOnDuty = score?.on_duty_device_id === deviceId;
   const levelColor = LEVEL_COLOR[score?.level] || colors.muted;
+  const accent = roleAccent(score?.on_duty_role || onDutyMember?.role);
 
   return (
-    <Card style={{ gap: spacing.md }}>
+    <Card style={{ gap: spacing.md, backgroundColor: accent.tint, borderColor: accent.fg + "40", borderWidth: 1 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-        <Feather name="repeat" size={20} color={colors.brand} />
+        <View style={[styles.avatarDot, { backgroundColor: accent.fg }]} />
         <Txt display style={{ fontSize: fontSize.lg, flex: 1 }}>Tag Team</Txt>
         <View style={[styles.badge, { backgroundColor: levelColor + "25" }]}>
           <View style={[styles.dot, { backgroundColor: levelColor }]} />
@@ -187,6 +213,15 @@ export function HandoffCard() {
         {onDutyMember?.name || "Someone"} has been on duty for{" "}
         <Txt weight="500">{score?.hours_on_duty ?? 0}h</Txt>. {score?.message}
       </Txt>
+
+      {score?.emotion_signal?.detected && (
+        <View style={[styles.emotionBanner, { borderColor: accent.fg + "50" }]}>
+          <Feather name="heart" size={14} color={accent.fg} />
+          <Txt style={{ color: colors.onSurface, fontSize: fontSize.sm, flex: 1 }}>
+            {score.emotion_signal.suggested_note}
+          </Txt>
+        </View>
+      )}
 
       <Pressable onPress={() => setShowBreakdown((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
         <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
@@ -220,6 +255,35 @@ export function HandoffCard() {
         </Txt>
       )}
     </Card>
+  );
+}
+
+function RolePicker({ selected, onSelect }: { selected: string; onSelect: (v: string) => void }) {
+  return (
+    <View style={{ flexDirection: "row", gap: spacing.sm }}>
+      {ROLE_OPTIONS.map((opt) => {
+        const active = selected === opt.value;
+        const accent = roleAccent(opt.value);
+        return (
+          <Pressable
+            key={opt.value}
+            onPress={() => onSelect(opt.value)}
+            style={[
+              styles.roleChip,
+              {
+                backgroundColor: active ? accent.tint : colors.surface,
+                borderColor: active ? accent.fg : colors.borderStrong,
+              },
+            ]}
+          >
+            <View style={[styles.roleDot, { backgroundColor: accent.fg }]} />
+            <Txt style={{ fontSize: fontSize.sm, color: active ? colors.onSurface : colors.muted }} weight={active ? "500" : "400"}>
+              {opt.label}
+            </Txt>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -260,6 +324,27 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
+  avatarDot: { width: 10, height: 10, borderRadius: 5 },
+  emotionBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    backgroundColor: colors.surface + "CC",
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  roleChip: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm,
+  },
+  roleDot: { width: 8, height: 8, borderRadius: 4 },
   breakdownBox: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
