@@ -11,15 +11,16 @@ type AmbientState = {
   // household set up yet, or nobody's on duty.
   tint: string;
   role: string | null;
+  refresh: () => void;
 };
 
-const AmbientContext = createContext<AmbientState>({ tint: colors.surface, role: null });
+const AmbientContext = createContext<AmbientState>({ tint: colors.surface, role: null, refresh: () => {} });
 
-const POLL_MS = 45000; // gentle refresh, not real-time — this is ambient, not urgent
+const POLL_MS = 45000; // gentle background refresh — actions that change duty call refresh() directly instead of waiting
 
 export function AmbientProvider({ children }: { children: React.ReactNode }) {
   const { deviceId } = useProfile();
-  const [state, setState] = useState<AmbientState>({ tint: colors.surface, role: null });
+  const [state, setState] = useState<{ tint: string; role: string | null }>({ tint: colors.surface, role: null });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -51,7 +52,7 @@ export function AmbientProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
 
-  return <AmbientContext.Provider value={state}>{children}</AmbientContext.Provider>;
+  return <AmbientContext.Provider value={{ ...state, refresh }}>{children}</AmbientContext.Provider>;
 }
 
 export function useAmbient() {

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, TextInput, Pressable, Share, Platform } from "react-native";
+import { View, StyleSheet, TextInput, Pressable, Share, Platform, Linking } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
@@ -8,6 +8,7 @@ import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { registerForPushNotifications } from "@/src/lib/push-notifications";
+import { useAmbient } from "@/src/lib/ambient-context";
 
 function appBaseUrl() {
   if (Platform.OS === "web" && typeof window !== "undefined") {
@@ -16,13 +17,34 @@ function appBaseUrl() {
   return null; // native build without a known web URL — code-only sharing still works
 }
 
-async function shareInvite(code: string, onCopied: () => void) {
+function buildInviteMessage(code: string) {
   const base = appBaseUrl();
   const link = base ? `${base}/join/${code}` : null;
-  const message = link
+  return link
     ? `Join me on Cuddle so we can tag-team caring for the baby. Tap this link and it'll walk you through it: ${link}\n\n(Or open Cuddle and enter code ${code})`
     : `Join me on Cuddle so we can tag-team caring for the baby. Open Cuddle and enter this code: ${code}`;
+}
 
+// Opens the Messages/iMessage app directly with the invite pre-filled — no
+// picker, no extra taps. Works on phones (iOS/Android); on desktop browsers
+// there's no Messages app to hand off to, so it simply won't do anything.
+function textInvite(code: string, phone: string) {
+  const message = buildInviteMessage(code);
+  const digits = phone.replace(/[^\d+]/g, "");
+  const encoded = encodeURIComponent(message);
+  // iOS wants '&body=', Android's SMS handler wants '?body=' — '&' also
+  // works broadly enough in practice, but we detect where we can.
+  const sep = Platform.OS === "ios" ? "&" : "?";
+  const url = `sms:${digits}${sep}body=${encoded}`;
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined") window.location.href = url;
+  } else {
+    Linking.openURL(url).catch(() => {});
+  }
+}
+
+async function shareInvite(code: string, onCopied: () => void) {
+  const message = buildInviteMessage(code);
   try {
     if (Platform.OS !== "web") {
       await Share.share({ message });
@@ -76,6 +98,7 @@ function roleAccent(role?: string | null) {
 
 export function HandoffCard() {
   const { deviceId, profile } = useProfile();
+  const { refresh: refreshAmbient } = useAmbient();
 
   const [household, setHousehold] = useState<any | null>(null);
   const [score, setScore] = useState<any | null>(null);
@@ -88,6 +111,7 @@ export function HandoffCard() {
   const [selectedRole, setSelectedRole] = useState("mom");
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [inviteePhone, setInviteePhone] = useState("");
 
   const load = useCallback(async () => {
     if (!deviceId) return;
@@ -120,6 +144,7 @@ export function HandoffCard() {
       });
       setHousehold(h);
       setMode(null);
+      refreshAmbient();
     } catch {}
     setBusy(false);
   };
@@ -138,6 +163,7 @@ export function HandoffCard() {
       setMode(null);
       const s = await api.handoffScore(h.household_code);
       setScore(s);
+      refreshAmbient();
     } catch {
       // likely an invalid code — keep the form open so they can retry
     }
@@ -155,6 +181,7 @@ export function HandoffCard() {
       setHousehold(h);
       const s = await api.handoffScore(h.household_code);
       setScore(s);
+      refreshAmbient();
     } catch {}
     setBusy(false);
   };
@@ -211,21 +238,46 @@ export function HandoffCard() {
 
   // ---- Household set up but only one member so far ----
   if (household.members.length < 2) {
-    const meAccent = roleAccent(household.members.find((m: any) => m.device_id === deviceId)?.role);
+    const myRole = household.members.find((m: any) => m.device_id === deviceId)?.role;
+    const meAccent = roleAccent(myRole);
+    const roleLabel = myRole ? myRole.charAt(0).toUpperCase() + myRole.slice(1) : "";
     return (
       <Card style={{ gap: spacing.sm, backgroundColor: meAccent.tint, borderColor: meAccent.fg + "40", borderWidth: 1 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <View style={[styles.avatarDot, { backgroundColor: meAccent.fg }]} />
           <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
+          {!!roleLabel && (
+            <View style={[styles.roleBadge, { backgroundColor: meAccent.fg + "30" }]}>
+              <Txt style={{ color: meAccent.fg, fontSize: fontSize.sm }} weight="500">You're {roleLabel}</Txt>
+            </View>
+          )}
         </View>
-        <Txt style={{ color: colors.muted }}>Share this code with your partner or caregiver:</Txt>
+        <Txt style={{ color: colors.muted }}>Text this invite straight to your partner or caregiver:</Txt>
+        <TextInput
+          value={inviteePhone}
+          onChangeText={setInviteePhone}
+          placeholder="Their phone number"
+          placeholderTextColor={colors.muted}
+          keyboardType="phone-pad"
+          style={styles.input}
+        />
+        <Button
+          label="Text it"
+          onPress={() => textInvite(household.household_code, inviteePhone)}
+          disabled={!inviteePhone.trim()}
+        />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs }}>
+          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>or share the code directly</Txt>
+          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+        </View>
         <View style={styles.codeBox}>
           <Txt display style={{ fontSize: fontSize["2xl"], letterSpacing: 4 }}>
             {household.household_code}
           </Txt>
         </View>
         <Button
-          label={copied ? "Copied — paste it in a text" : "Share invite"}
+          label={copied ? "Copied — paste it in a text" : "More share options"}
           variant="secondary"
           onPress={() => shareInvite(household.household_code, () => {
             setCopied(true);
@@ -362,6 +414,11 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     color: colors.onSurface,
     backgroundColor: colors.surface,
+  },
+  roleBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
   },
   codeBox: {
     backgroundColor: colors.surface,
