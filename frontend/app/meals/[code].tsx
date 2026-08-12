@@ -74,7 +74,7 @@ export default function MealTrainJoin() {
       setSlots(res.slots || []);
       setMyTokens(await loadTokens());
     } catch {
-      setError("Couldn't find that meal train — double check the code with whoever shared it.");
+      setError("This link doesn't seem to work anymore — ask whoever shared it to resend it.");
     }
     setLoading(false);
   }, [code]);

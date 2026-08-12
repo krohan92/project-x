@@ -69,7 +69,7 @@ export default function Care() {
               <Feather name="coffee" size={20} color={colors.brand} />
             </View>
             <View style={{ flex: 1 }}>
-              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Meal Train</Txt>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Dinner Bell</Txt>
               <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
                 Let people bring you food — share a link, no app needed on their end
               </Txt>

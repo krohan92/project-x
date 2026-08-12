@@ -68,15 +68,15 @@ export default function Meals() {
     const base = appBaseUrl();
     const link = base ? `${base}/meals/${train.meal_train_code}` : null;
     const message = link
-      ? `Would you help bring a meal for us? Pick any open day here: ${link}\n\n(Or open Cuddle and enter code ${train.meal_train_code})`
-      : `Would you help bring a meal for us? Open Cuddle and enter code ${train.meal_train_code}`;
+      ? `Would you help bring a meal for us? Pick any open day here: ${link}`
+      : `Would you help bring a meal for us? I'll send you the link to pick a day.`;
     try {
       if (Platform.OS !== "web") {
         await Share.share({ message });
         return;
       }
       if (typeof navigator !== "undefined" && (navigator as any).share) {
-        await (navigator as any).share({ title: "Meal Train", text: message });
+        await (navigator as any).share({ title: "Dinner Bell", text: message, url: link || undefined });
         return;
       }
       if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -94,7 +94,7 @@ export default function Meals() {
           <Feather name="arrow-left" size={22} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Txt display style={{ fontSize: fontSize.xl }}>Meal Train</Txt>
+          <Txt display style={{ fontSize: fontSize.xl }}>Dinner Bell</Txt>
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Let people bring you food</Txt>
         </View>
       </View>
@@ -102,8 +102,8 @@ export default function Meals() {
       {!train ? (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           <Txt style={{ color: colors.onSurface }}>
-            Start a meal train and share the link — friends and family can pick a day and bring
-            (or send) a meal, no app or account needed on their end.
+            Ring the bell and share one link — friends and family tap it, pick an open day, and
+            bring (or send) a meal. No app, no account, nothing for them to sign up for.
           </Txt>
           <Txt weight="500">Title</Txt>
           <TextInput value={title} onChangeText={setTitle} style={styles.input} placeholder="Meals for us" placeholderTextColor={colors.muted} />
@@ -116,16 +116,16 @@ export default function Meals() {
             placeholderTextColor={colors.muted}
             multiline
           />
-          <Button label="Create meal train" onPress={create} loading={creating} disabled={!title.trim()} />
+          <Button label="Start Dinner Bell" onPress={create} loading={creating} disabled={!title.trim()} />
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["3xl"] }}>
-          <Card style={{ gap: spacing.sm }}>
-            <Txt style={{ color: colors.muted }}>Share this with anyone who wants to help:</Txt>
-            <View style={styles.codeBox}>
-              <Txt display style={{ fontSize: fontSize["2xl"], letterSpacing: 4 }}>{train.meal_train_code}</Txt>
-            </View>
-            <Button label={copied ? "Copied!" : "Share link"} variant="secondary" onPress={shareLink} />
+          <Card style={{ gap: spacing.sm, alignItems: "center" }}>
+            <Feather name="bell" size={26} color={colors.brand} />
+            <Txt style={{ color: colors.muted, textAlign: "center" }}>
+              One link does it all — send it to anyone who wants to help.
+            </Txt>
+            <Button label={copied ? "Link copied!" : "Share link"} onPress={shareLink} style={{ width: "100%" }} />
           </Card>
 
           <Txt display style={{ fontSize: fontSize.lg, marginTop: spacing.md }}>Sign-ups</Txt>
@@ -160,12 +160,6 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     borderWidth: 1,
     borderColor: colors.border,
-  },
-  codeBox: {
-    backgroundColor: colors.surfaceSecondary,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: "center",
   },
   slotRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
 });
