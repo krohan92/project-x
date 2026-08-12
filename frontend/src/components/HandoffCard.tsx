@@ -2,6 +2,7 @@ import React, { useCallback, useState } from "react";
 import { View, StyleSheet, TextInput, Pressable, Share, Platform, Linking } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
+import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 
 import { Txt, Card, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
@@ -112,6 +113,9 @@ export function HandoffCard() {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [copied, setCopied] = useState(false);
   const [inviteePhone, setInviteePhone] = useState("");
+  const [editingRole, setEditingRole] = useState(false);
+  const [roleDraft, setRoleDraft] = useState("mom");
+  const [savingRole, setSavingRole] = useState(false);
 
   const load = useCallback(async () => {
     if (!deviceId) return;
@@ -186,53 +190,80 @@ export function HandoffCard() {
     setBusy(false);
   };
 
+  const changeRole = async () => {
+    if (!deviceId || !household) return;
+    setSavingRole(true);
+    try {
+      const h = await api.updateRole({
+        household_code: household.household_code,
+        device_id: deviceId,
+        role: roleDraft,
+      });
+      setHousehold(h);
+      if (score) {
+        const s = await api.handoffScore(h.household_code);
+        setScore(s);
+      }
+      refreshAmbient();
+      setEditingRole(false);
+    } catch {}
+    setSavingRole(false);
+  };
+
   if (loading) return null;
 
   // ---- No household yet: setup ----
   if (!household) {
     return (
-      <Card style={{ gap: spacing.md }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <Feather name="repeat" size={20} color={colors.brand} />
-          <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
-        </View>
-        <Txt style={{ color: colors.muted }}>
-          Link up with your partner or another caregiver so Cuddle can gently nudge when
-          it might be a good time to switch off.
-        </Txt>
-
-        <RolePicker selected={selectedRole} onSelect={setSelectedRole} />
-
-        {mode === null && (
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            <Button label="Start a household" onPress={() => setMode("create")} style={{ flex: 1 }} />
-            <Button label="I have a code" variant="secondary" onPress={() => setMode("join")} style={{ flex: 1 }} />
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <Card style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            {mode !== null && (
+              <Pressable onPress={() => setMode(null)} hitSlop={10} testID="tag-team-back">
+                <Feather name="arrow-left" size={18} color={colors.muted} />
+              </Pressable>
+            )}
+            <Feather name="repeat" size={20} color={colors.brand} />
+            <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
           </View>
-        )}
+          <Txt style={{ color: colors.muted }}>
+            Link up with your partner or another caregiver so Cuddle can gently nudge when
+            it might be a good time to switch off.
+          </Txt>
 
-        {mode === "create" && (
-          <View style={{ gap: spacing.sm }}>
-            <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
-              We'll generate a short code to share with your partner or caregiver.
-            </Txt>
-            <Button label="Generate code" onPress={create} loading={busy} />
-          </View>
-        )}
+          <RolePicker selected={selectedRole} onSelect={setSelectedRole} />
 
-        {mode === "join" && (
-          <View style={{ gap: spacing.sm }}>
-            <TextInput
-              value={codeInput}
-              onChangeText={setCodeInput}
-              placeholder="Enter household code"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="characters"
-              style={styles.input}
-            />
-            <Button label="Join" onPress={join} loading={busy} disabled={!codeInput.trim()} />
-          </View>
-        )}
-      </Card>
+          {mode === null && (
+            <Animated.View entering={FadeIn} style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Button label="Start a household" onPress={() => setMode("create")} style={{ flex: 1 }} />
+              <Button label="I have a code" variant="secondary" onPress={() => setMode("join")} style={{ flex: 1 }} />
+            </Animated.View>
+          )}
+
+          {mode === "create" && (
+            <Animated.View entering={FadeInDown.duration(250)} style={{ gap: spacing.sm }}>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+                We'll generate a short code to share with your partner or caregiver.
+              </Txt>
+              <Button label="Generate code" onPress={create} loading={busy} />
+            </Animated.View>
+          )}
+
+          {mode === "join" && (
+            <Animated.View entering={FadeInDown.duration(250)} style={{ gap: spacing.sm }}>
+              <TextInput
+                value={codeInput}
+                onChangeText={setCodeInput}
+                placeholder="Enter household code"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="characters"
+                style={styles.input}
+              />
+              <Button label="Join" onPress={join} loading={busy} disabled={!codeInput.trim()} />
+            </Animated.View>
+          )}
+        </Card>
+      </Animated.View>
     );
   }
 
@@ -242,54 +273,75 @@ export function HandoffCard() {
     const meAccent = roleAccent(myRole);
     const roleLabel = myRole ? myRole.charAt(0).toUpperCase() + myRole.slice(1) : "";
     return (
-      <Card style={{ gap: spacing.sm, backgroundColor: meAccent.tint, borderColor: meAccent.fg + "40", borderWidth: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-          <View style={[styles.avatarDot, { backgroundColor: meAccent.fg }]} />
-          <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
-          {!!roleLabel && (
-            <View style={[styles.roleBadge, { backgroundColor: meAccent.fg + "30" }]}>
-              <Txt style={{ color: meAccent.fg, fontSize: fontSize.sm }} weight="500">You're {roleLabel}</Txt>
-            </View>
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <Card style={{ gap: spacing.sm, backgroundColor: meAccent.tint, borderColor: meAccent.fg + "40", borderWidth: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <View style={[styles.avatarDot, { backgroundColor: meAccent.fg }]} />
+            <Txt display style={{ fontSize: fontSize.lg }}>Tag Team</Txt>
+            {!!roleLabel && !editingRole && (
+              <Animated.View entering={FadeIn}>
+                <Pressable
+                  onPress={() => { setRoleDraft(myRole); setEditingRole(true); }}
+                  style={[styles.roleBadge, { backgroundColor: meAccent.fg + "30", flexDirection: "row", alignItems: "center", gap: 4 }]}
+                >
+                  <Txt style={{ color: meAccent.fg, fontSize: fontSize.sm }} weight="500">You're {roleLabel}</Txt>
+                  <Feather name="edit-2" size={11} color={meAccent.fg} />
+                </Pressable>
+              </Animated.View>
+            )}
+          </View>
+
+          {editingRole ? (
+            <Animated.View entering={FadeInDown.duration(250)} style={{ gap: spacing.sm }}>
+              <RolePicker selected={roleDraft} onSelect={setRoleDraft} />
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <Button label="Save" onPress={changeRole} loading={savingRole} style={{ flex: 1 }} />
+                <Button label="Cancel" variant="secondary" onPress={() => setEditingRole(false)} style={{ flex: 1 }} />
+              </View>
+            </Animated.View>
+          ) : (
+            <Animated.View entering={FadeIn} style={{ gap: spacing.sm }}>
+              <Txt style={{ color: colors.muted }}>Text this invite straight to your partner or caregiver:</Txt>
+              <TextInput
+                value={inviteePhone}
+                onChangeText={setInviteePhone}
+                placeholder="Their phone number"
+                placeholderTextColor={colors.muted}
+                keyboardType="phone-pad"
+                style={styles.input}
+              />
+              <Button
+                label="Text it"
+                onPress={() => textInvite(household.household_code, inviteePhone)}
+                disabled={!inviteePhone.trim()}
+              />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>or share the code directly</Txt>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+              </View>
+              <View style={styles.codeBox}>
+                <Txt display style={{ fontSize: fontSize["2xl"], letterSpacing: 4 }}>
+                  {household.household_code}
+                </Txt>
+              </View>
+              <Button
+                label={copied ? "Copied — paste it in a text" : "More share options"}
+                variant="secondary"
+                onPress={() => shareInvite(household.household_code, () => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2500);
+                })}
+              />
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+                If they already have Cuddle, they can just type in the code. If not, the link walks
+                them to a page where they enter it themselves after installing — either way, no
+                account or login needed.
+              </Txt>
+            </Animated.View>
           )}
-        </View>
-        <Txt style={{ color: colors.muted }}>Text this invite straight to your partner or caregiver:</Txt>
-        <TextInput
-          value={inviteePhone}
-          onChangeText={setInviteePhone}
-          placeholder="Their phone number"
-          placeholderTextColor={colors.muted}
-          keyboardType="phone-pad"
-          style={styles.input}
-        />
-        <Button
-          label="Text it"
-          onPress={() => textInvite(household.household_code, inviteePhone)}
-          disabled={!inviteePhone.trim()}
-        />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs }}>
-          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
-          <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>or share the code directly</Txt>
-          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
-        </View>
-        <View style={styles.codeBox}>
-          <Txt display style={{ fontSize: fontSize["2xl"], letterSpacing: 4 }}>
-            {household.household_code}
-          </Txt>
-        </View>
-        <Button
-          label={copied ? "Copied — paste it in a text" : "More share options"}
-          variant="secondary"
-          onPress={() => shareInvite(household.household_code, () => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2500);
-          })}
-        />
-        <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
-          If they already have Cuddle, they can just type in the code. If not, the link walks
-          them to a page where they enter it themselves after installing — either way, no
-          account or login needed.
-        </Txt>
-      </Card>
+        </Card>
+      </Animated.View>
     );
   }
 
@@ -298,71 +350,98 @@ export function HandoffCard() {
   const isMeOnDuty = score?.on_duty_device_id === deviceId;
   const levelColor = LEVEL_COLOR[score?.level] || colors.muted;
   const accent = roleAccent(score?.on_duty_role || onDutyMember?.role);
+  const myMember = household.members.find((m: any) => m.device_id === deviceId);
+  const myRoleLabel = myMember?.role ? myMember.role.charAt(0).toUpperCase() + myMember.role.slice(1) : "";
 
   return (
-    <Card style={{ gap: spacing.md, backgroundColor: accent.tint, borderColor: accent.fg + "40", borderWidth: 1 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-        <View style={[styles.avatarDot, { backgroundColor: accent.fg }]} />
-        <Txt display style={{ fontSize: fontSize.lg, flex: 1 }}>Tag Team</Txt>
-        <View style={[styles.badge, { backgroundColor: levelColor + "25" }]}>
-          <View style={[styles.dot, { backgroundColor: levelColor }]} />
-          <Txt weight="500" style={{ color: levelColor, fontSize: fontSize.sm }}>
-            {LEVEL_LABEL[score?.level] || ""}
-          </Txt>
+    <Animated.View entering={FadeInDown.duration(400)}>
+      <Card style={{ gap: spacing.md, backgroundColor: accent.tint, borderColor: accent.fg + "40", borderWidth: 1 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <View style={[styles.avatarDot, { backgroundColor: accent.fg }]} />
+          <Txt display style={{ fontSize: fontSize.lg, flex: 1 }}>Tag Team</Txt>
+          {!editingRole && (
+            <Pressable
+              onPress={() => { setRoleDraft(myMember?.role || "mom"); setEditingRole(true); }}
+              style={[styles.roleBadge, { backgroundColor: colors.surface + "AA", flexDirection: "row", alignItems: "center", gap: 4 }]}
+            >
+              <Txt style={{ color: colors.onSurface, fontSize: fontSize.sm }} weight="500">You're {myRoleLabel}</Txt>
+              <Feather name="edit-2" size={11} color={colors.onSurface} />
+            </Pressable>
+          )}
+          {!editingRole && (
+            <View style={[styles.badge, { backgroundColor: levelColor + "25" }]}>
+              <View style={[styles.dot, { backgroundColor: levelColor }]} />
+              <Txt weight="500" style={{ color: levelColor, fontSize: fontSize.sm }}>
+                {LEVEL_LABEL[score?.level] || ""}
+              </Txt>
+            </View>
+          )}
         </View>
-      </View>
 
-      <Txt style={{ color: colors.onSurface }}>
-        {onDutyMember?.name || "Someone"} has been on duty for{" "}
-        <Txt weight="500">{score?.hours_on_duty ?? 0}h</Txt>. {score?.message}
-      </Txt>
+        {editingRole ? (
+          <Animated.View entering={FadeInDown.duration(250)} exiting={FadeOut} style={{ gap: spacing.sm }}>
+            <RolePicker selected={roleDraft} onSelect={setRoleDraft} />
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Button label="Save" onPress={changeRole} loading={savingRole} style={{ flex: 1 }} />
+              <Button label="Cancel" variant="secondary" onPress={() => setEditingRole(false)} style={{ flex: 1 }} />
+            </View>
+          </Animated.View>
+        ) : (
+          <Animated.View entering={FadeIn} exiting={FadeOut} style={{ gap: spacing.md }}>
+            <Txt style={{ color: colors.onSurface }}>
+              {onDutyMember?.name || "Someone"} has been on duty for{" "}
+              <Txt weight="500">{score?.hours_on_duty ?? 0}h</Txt>. {score?.message}
+            </Txt>
 
-      {score?.emotion_signal?.detected && (
-        <View style={[styles.emotionBanner, { borderColor: accent.fg + "50" }]}>
-          <Feather name="heart" size={14} color={accent.fg} />
-          <Txt style={{ color: colors.onSurface, fontSize: fontSize.sm, flex: 1 }}>
-            {score.emotion_signal.suggested_note}
-          </Txt>
-        </View>
-      )}
+            {score?.emotion_signal?.detected && (
+              <Animated.View entering={FadeIn} style={[styles.emotionBanner, { borderColor: accent.fg + "50" }]}>
+                <Feather name="heart" size={14} color={accent.fg} />
+                <Txt style={{ color: colors.onSurface, fontSize: fontSize.sm, flex: 1 }}>
+                  {score.emotion_signal.suggested_note}
+                </Txt>
+              </Animated.View>
+            )}
 
-      <Pressable onPress={() => setShowBreakdown((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-        <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
-          {showBreakdown ? "Hide" : "Why this suggestion?"}
-        </Txt>
-        <Feather name={showBreakdown ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
-      </Pressable>
+            <Pressable onPress={() => setShowBreakdown((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+                {showBreakdown ? "Hide" : "Why this suggestion?"}
+              </Txt>
+              <Feather name={showBreakdown ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
+            </Pressable>
 
-      {showBreakdown && score?.breakdown && (
-        <View style={styles.breakdownBox}>
-          <BreakdownRow label="Hours on duty" value={`${score.breakdown.hours_on_duty}h`} />
-          <BreakdownRow label="Interruptions this shift" value={String(score.breakdown.interruptions_since_shift_start)} />
-          <BreakdownRow label="Overnight interruptions" value={String(score.breakdown.overnight_interruptions)} />
-          <BreakdownRow
-            label="Latest energy"
-            value={score.breakdown.latest_energy_1to5 != null ? `${score.breakdown.latest_energy_1to5}/5` : "—"}
-          />
-          <BreakdownRow
-            label="Latest mood"
-            value={score.breakdown.latest_mood_1to5 != null ? `${score.breakdown.latest_mood_1to5}/5` : "—"}
-          />
-        </View>
-      )}
+            {showBreakdown && score?.breakdown && (
+              <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOut} style={styles.breakdownBox}>
+                <BreakdownRow label="Hours on duty" value={`${score.breakdown.hours_on_duty}h`} />
+                <BreakdownRow label="Interruptions this shift" value={String(score.breakdown.interruptions_since_shift_start)} />
+                <BreakdownRow label="Overnight interruptions" value={String(score.breakdown.overnight_interruptions)} />
+                <BreakdownRow
+                  label="Latest energy"
+                  value={score.breakdown.latest_energy_1to5 != null ? `${score.breakdown.latest_energy_1to5}/5` : "—"}
+                />
+                <BreakdownRow
+                  label="Latest mood"
+                  value={score.breakdown.latest_mood_1to5 != null ? `${score.breakdown.latest_mood_1to5}/5` : "—"}
+                />
+              </Animated.View>
+            )}
 
-      {!isMeOnDuty && (
-        <Button label="I've got it — tag me in" onPress={tagIn} loading={busy} />
-      )}
-      {isMeOnDuty && (
-        <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
-          You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
-        </Txt>
-      )}
-      {Platform.OS === "web" && (
-        <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>
-          Push nudges need the phone app (not this web version) — this card still updates live either way.
-        </Txt>
-      )}
-    </Card>
+            {!isMeOnDuty && (
+              <Button label="I've got it — tag me in" onPress={tagIn} loading={busy} />
+            )}
+            {isMeOnDuty && (
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
+                You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
+              </Txt>
+            )}
+            {Platform.OS === "web" && (
+              <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>
+                Push nudges need the phone app (not this web version) — this card still updates live either way.
+              </Txt>
+            )}
+          </Animated.View>
+        )}
+      </Card>
+    </Animated.View>
   );
 }
 

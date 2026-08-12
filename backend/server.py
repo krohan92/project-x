@@ -642,6 +642,12 @@ class HandoffSwitch(BaseModel):
     note: Optional[str] = None
 
 
+class RoleUpdate(BaseModel):
+    household_code: str
+    device_id: str
+    role: str
+
+
 class PushRegister(BaseModel):
     device_id: str
     expo_push_token: str
@@ -1256,6 +1262,18 @@ async def join_household(j: HouseholdJoin):
     return h
 
 
+@api_router.patch("/household/role")
+async def update_role(r: RoleUpdate):
+    h = await _get_household(r.household_code)
+    if not any(m["device_id"] == r.device_id for m in h["members"]):
+        raise HTTPException(status_code=404, detail="Not a member of this household")
+    await db.households.update_one(
+        {"household_code": r.household_code, "members.device_id": r.device_id},
+        {"$set": {"members.$.role": r.role}},
+    )
+    return await _get_household(r.household_code)
+
+
 @api_router.get("/household/by-device/{device_id}")
 async def household_for_device(device_id: str):
     h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
@@ -1410,7 +1428,11 @@ async def handoff_history(household_code: str, limit: int = 20):
 async def spaces_for(device_id: str):
     prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0}) or {}
     joined = prof.get("joined_spaces", [])
-    return {"spaces": CULTURAL_SPACES, "joined": joined}
+    counts = {}
+    for space in CULTURAL_SPACES:
+        counts[space["key"]] = await db.profiles.count_documents({"joined_spaces": space["key"]})
+    spaces_with_counts = [{**s, "member_count": counts.get(s["key"], 0)} for s in CULTURAL_SPACES]
+    return {"spaces": spaces_with_counts, "joined": joined}
 
 
 @api_router.post("/spaces/join")
@@ -1612,6 +1634,71 @@ class MealCheckinCreate(BaseModel):
     ate_today: bool
 
 
+# ----- Neighborhood Meetups -----
+# Starting hyper-local (Riverstone and Tesoro Viejo, both in Madera) since
+# that's where this rolls out first, with Fresno general added as the
+# next-phase, lighter-weight option — the venue list there will grow as
+# more moms use it there.
+MEETUP_NEIGHBORHOODS = [
+    {"key": "riverstone", "label": "Riverstone", "city": "Madera"},
+    {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera"},
+    {"key": "fresno", "label": "Fresno (general)", "city": "Fresno"},
+]
+
+# Real, named spots — not generic placeholders — so the suggestion is
+# actually useful the first time someone opens this.
+MEETUP_VENUES = {
+    "riverstone": [
+        {"name": "Adventure Park", "type": "park", "note": "Play structures, climbing boulders, slides"},
+        {"name": "Pavilion Park", "type": "park", "note": "Play equipment, tire swings, mini soccer field"},
+        {"name": "Garden Park", "type": "park", "note": "BBQ areas, play structure, communal table"},
+        {"name": "Central Bark Dog Park", "type": "park", "note": "If the meetup includes the family dog"},
+        {"name": "The Lodge", "type": "clubhouse", "note": "Pool, spa, indoor gathering space"},
+        {"name": "Riverwalk", "type": "cafe", "note": "Cafes and restaurants near Riverstone"},
+    ],
+    "tesoro_viejo": [
+        {"name": "AXIS Coffee Bar + Eatery", "type": "cafe", "note": "Town Center coffee shop"},
+        {"name": "Ranch House Clubhouse", "type": "clubhouse", "note": "Pools, cabanas, BBQ pavilion"},
+        {"name": "Sycamore Square", "type": "park", "note": "Pocket park, open lawn and seating"},
+        {"name": "Rosie's Greenway", "type": "park", "note": "Tree-lined path, picnic tables, open lawn"},
+        {"name": "Lyles Greenway", "type": "park", "note": "Rose garden, linear park"},
+    ],
+    "fresno": [
+        {"name": "Pick your own spot", "type": "other", "note": "Fresno venue suggestions are still growing — name your favorite when you create a meetup"},
+    ],
+}
+
+MEETUP_CATEGORIES = [
+    {"key": "baby_date", "label": "Baby Date", "icon": "smile"},
+    {"key": "mom_date", "label": "Mom Date", "icon": "coffee"},
+    {"key": "other", "label": "Other Get-together", "icon": "users"},
+]
+
+
+class MeetupCreate(BaseModel):
+    device_id: str
+    title: str
+    category: str
+    neighborhood: str
+    venue_name: str
+    date: str            # ISO date, e.g. 2026-08-20
+    time_label: str       # display string, e.g. "10:00 AM"
+    duration_minutes: int = 90
+    description: Optional[str] = None
+    cultural_tag: Optional[str] = None   # optional link to a CULTURAL_SPACES key
+
+
+class MeetupRSVP(BaseModel):
+    device_id: str
+    name: str
+
+
+class MeetupReflection(BaseModel):
+    device_id: str
+    mood_after: int          # 1-5
+    note: Optional[str] = None
+
+
 def _meal_train_code() -> str:
     return uuid.uuid4().hex[:6].upper()
 
@@ -1696,6 +1783,208 @@ async def meal_checkin_today(device_id: str):
     today = datetime.now(timezone.utc).date().isoformat()
     doc = await db.meal_checkins.find_one({"device_id": device_id, "date": today}, {"_id": 0})
     return {"done": doc is not None, "entry": doc}
+
+
+# ----- Neighborhood Meetups -----
+@api_router.get("/meetups/neighborhoods")
+async def meetup_neighborhoods():
+    return MEETUP_NEIGHBORHOODS
+
+
+@api_router.get("/meetups/categories")
+async def meetup_categories():
+    return MEETUP_CATEGORIES
+
+
+@api_router.get("/meetups/venues/{neighborhood}")
+async def meetup_venues(neighborhood: str):
+    return MEETUP_VENUES.get(neighborhood, [])
+
+
+@api_router.get("/meetups/venues/{neighborhood}/recommended")
+async def recommended_venues(neighborhood: str):
+    """Ranks venues by how highly moms rated their mood after past meetups
+    there — light personalization from real outcomes, not just a static list."""
+    venues = MEETUP_VENUES.get(neighborhood, [])
+    scored = []
+    for v in venues:
+        past = await db.meetups.find({"neighborhood": neighborhood, "venue_name": v["name"]}, {"_id": 0}).to_list(50)
+        meetup_ids = [m["meetup_id"] for m in past]
+        if meetup_ids:
+            reflections = await db.meetup_reflections.find({"meetup_id": {"$in": meetup_ids}}, {"_id": 0}).to_list(200)
+            if reflections:
+                avg_mood = sum(r["mood_after"] for r in reflections) / len(reflections)
+                scored.append({**v, "avg_mood_after": round(avg_mood, 1), "reflection_count": len(reflections)})
+                continue
+        scored.append({**v, "avg_mood_after": None, "reflection_count": 0})
+    scored.sort(key=lambda v: (v["avg_mood_after"] is None, -(v["avg_mood_after"] or 0)))
+    return scored
+
+
+@api_router.post("/meetups")
+async def create_meetup(m: MeetupCreate):
+    meetup_id = uuid.uuid4().hex[:10]
+    doc = m.model_dump()
+    doc["meetup_id"] = meetup_id
+    doc["created_at"] = now_iso()
+    doc["attendees"] = [{"device_id": m.device_id, "name": "Host"}]
+    await db.meetups.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/meetups")
+async def list_meetups(neighborhood: Optional[str] = None, category: Optional[str] = None, cultural_tag: Optional[str] = None):
+    today = datetime.now(timezone.utc).date().isoformat()
+    query: dict = {"date": {"$gte": today}}
+    if neighborhood and neighborhood != "all":
+        query["neighborhood"] = neighborhood
+    if category and category != "all":
+        query["category"] = category
+    if cultural_tag:
+        query["cultural_tag"] = cultural_tag
+    docs = await db.meetups.find(query, {"_id": 0}).sort("date", 1).to_list(200)
+    return docs
+
+
+@api_router.get("/meetups/mine/{device_id}")
+async def my_meetups(device_id: str):
+    docs = await db.meetups.find(
+        {"attendees.device_id": device_id}, {"_id": 0}
+    ).sort("date", -1).to_list(100)
+    return docs
+
+
+@api_router.get("/meetups/{meetup_id}")
+async def get_meetup(meetup_id: str):
+    doc = await db.meetups.find_one({"meetup_id": meetup_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Meetup not found")
+    return doc
+
+
+@api_router.post("/meetups/{meetup_id}/rsvp")
+async def rsvp_meetup(meetup_id: str, r: MeetupRSVP):
+    meetup = await db.meetups.find_one({"meetup_id": meetup_id})
+    if not meetup:
+        raise HTTPException(status_code=404, detail="Meetup not found")
+    if not any(a["device_id"] == r.device_id for a in meetup.get("attendees", [])):
+        await db.meetups.update_one(
+            {"meetup_id": meetup_id},
+            {"$push": {"attendees": {"device_id": r.device_id, "name": r.name}}},
+        )
+    return await db.meetups.find_one({"meetup_id": meetup_id}, {"_id": 0})
+
+
+@api_router.delete("/meetups/{meetup_id}/rsvp/{device_id}")
+async def cancel_rsvp(meetup_id: str, device_id: str):
+    await db.meetups.update_one(
+        {"meetup_id": meetup_id},
+        {"$pull": {"attendees": {"device_id": device_id}}},
+    )
+    return {"ok": True}
+
+
+def _ics_escape(text: str) -> str:
+    return (text or "").replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+
+
+@api_router.get("/meetups/{meetup_id}/calendar.ics")
+async def meetup_ics(meetup_id: str):
+    """Standard .ics export — this is what makes 'Add to Apple Calendar'
+    work: iOS Safari recognizes text/calendar and opens the native import
+    sheet directly. Same file works for Google/Outlook calendar too."""
+    meetup = await db.meetups.find_one({"meetup_id": meetup_id}, {"_id": 0})
+    if not meetup:
+        raise HTTPException(status_code=404, detail="Meetup not found")
+
+    try:
+        start_dt = datetime.strptime(f"{meetup['date']} {meetup['time_label']}", "%Y-%m-%d %I:%M %p")
+    except ValueError:
+        start_dt = datetime.strptime(meetup["date"], "%Y-%m-%d")
+    end_dt = start_dt + timedelta(minutes=meetup.get("duration_minutes", 90))
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    venue = meetup.get("venue_name", "")
+    neighborhood_label = next((n["label"] for n in MEETUP_NEIGHBORHOODS if n["key"] == meetup.get("neighborhood")), "")
+    location = f"{venue}, {neighborhood_label}" if neighborhood_label else venue
+
+    ics = "\r\n".join([
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Cuddle//Meetup//EN",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{meetup_id}@cuddleapp",
+        f"DTSTAMP:{dtstamp}",
+        f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+        f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+        f"SUMMARY:{_ics_escape(meetup['title'])}",
+        f"LOCATION:{_ics_escape(location)}",
+        f"DESCRIPTION:{_ics_escape(meetup.get('description') or 'Planned via Cuddle')}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ])
+    return StreamingResponse(
+        iter([ics]),
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="meetup-{meetup_id}.ics"'},
+    )
+
+
+@api_router.post("/meetups/{meetup_id}/reflection")
+async def meetup_reflection(meetup_id: str, r: MeetupReflection):
+    """A short, warm AI reflection after a meetup — and it's logged as a
+    real mood entry too, so it actually feeds her Journey trends, not just
+    sitting in a separate silo."""
+    meetup = await db.meetups.find_one({"meetup_id": meetup_id}, {"_id": 0})
+    if not meetup:
+        raise HTTPException(status_code=404, detail="Meetup not found")
+
+    ai_note = None
+    if anthropic_client:
+        try:
+            prompt = (
+                f"A mom just attended a meetup called \"{meetup['title']}\" with other moms nearby. "
+                f"She rated how she felt afterward as {r.mood_after}/5. "
+                + (f"She said: \"{r.note}\". " if r.note else "")
+                + "Write ONE short, warm sentence acknowledging her experience. If it sounds like it went "
+                "well, gently encourage her to do more of these. Never diagnose or make medical claims."
+            )
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=120,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_note = "".join(b.text for b in response.content if b.type == "text").strip()
+        except Exception:
+            logger.exception("meetup reflection AI failed")
+
+    doc = {
+        "meetup_id": meetup_id,
+        "device_id": r.device_id,
+        "mood_after": r.mood_after,
+        "note": r.note,
+        "ai_note": ai_note,
+        "created_at": now_iso(),
+    }
+    await db.meetup_reflections.insert_one(dict(doc))
+
+    # Also log into her regular mood history so this genuinely feeds her
+    # existing Journey trends, not a disconnected feature.
+    await db.moods.insert_one({
+        "device_id": r.device_id,
+        "mood": r.mood_after,
+        "energy": None,
+        "sleep_hours": None,
+        "note": f"After meetup: {meetup['title']}" + (f" \u2014 {r.note}" if r.note else ""),
+        "tags": ["Meetup"],
+        "created_at": now_iso(),
+    })
+
+    doc.pop("_id", None)
+    return doc
 
 
 app.include_router(api_router)

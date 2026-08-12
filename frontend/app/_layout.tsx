@@ -92,6 +92,7 @@ export default function RootLayout() {
                 <Stack.Screen name="meals/[code]" />
                 <Stack.Screen name="dad-corner" />
                 <Stack.Screen name="brain-notes" />
+                <Stack.Screen name="meetup/[id]" />
               </Stack>
             </WebFrame>
           </LanguageProvider>

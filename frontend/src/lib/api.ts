@@ -128,6 +128,8 @@ export const api = {
     req(`/household`, { method: "POST", body: JSON.stringify(body) }),
   joinHousehold: (body: { device_id: string; household_code: string; name: string; role?: string }) =>
     req(`/household/join`, { method: "POST", body: JSON.stringify(body) }),
+  updateRole: (body: { household_code: string; device_id: string; role: string }) =>
+    req(`/household/role`, { method: "PATCH", body: JSON.stringify(body) }),
   householdForDevice: (deviceId: string) => req(`/household/by-device/${deviceId}`),
   handoffScore: (householdCode: string) => req(`/handoff/score/${householdCode}`),
   handoffSwitch: (body: { household_code: string; device_id: string; note?: string }) =>
@@ -191,4 +193,28 @@ export const api = {
     req(`/brain-notes/${deviceId}${includeDone ? "?include_done=true" : ""}`),
   completeBrainNote: (noteId: string) => req(`/brain-notes/${noteId}/done`, { method: "PATCH" }),
   deleteBrainNote: (noteId: string) => req(`/brain-notes/${noteId}`, { method: "DELETE" }),
+
+  // ----- Neighborhood Meetups -----
+  meetupNeighborhoods: () => req(`/meetups/neighborhoods`),
+  meetupCategories: () => req(`/meetups/categories`),
+  meetupVenues: (neighborhood: string) => req(`/meetups/venues/${neighborhood}`),
+  recommendedVenues: (neighborhood: string) => req(`/meetups/venues/${neighborhood}/recommended`),
+  createMeetup: (body: any) => req(`/meetups`, { method: "POST", body: JSON.stringify(body) }),
+  listMeetups: (params?: { neighborhood?: string; category?: string; cultural_tag?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.neighborhood) qs.set("neighborhood", params.neighborhood);
+    if (params?.category) qs.set("category", params.category);
+    if (params?.cultural_tag) qs.set("cultural_tag", params.cultural_tag);
+    const q = qs.toString();
+    return req(`/meetups${q ? `?${q}` : ""}`);
+  },
+  myMeetups: (deviceId: string) => req(`/meetups/mine/${deviceId}`),
+  getMeetup: (meetupId: string) => req(`/meetups/${meetupId}`),
+  rsvpMeetup: (meetupId: string, body: { device_id: string; name: string }) =>
+    req(`/meetups/${meetupId}/rsvp`, { method: "POST", body: JSON.stringify(body) }),
+  cancelRsvp: (meetupId: string, deviceId: string) =>
+    req(`/meetups/${meetupId}/rsvp/${deviceId}`, { method: "DELETE" }),
+  meetupIcsUrl: (meetupId: string) => `${API}/meetups/${meetupId}/calendar.ics`,
+  submitMeetupReflection: (meetupId: string, body: { device_id: string; mood_after: number; note?: string }) =>
+    req(`/meetups/${meetupId}/reflection`, { method: "POST", body: JSON.stringify(body) }),
 };

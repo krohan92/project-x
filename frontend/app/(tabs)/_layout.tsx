@@ -55,6 +55,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="meetups"
+        options={{
+          title: "Meetups",
+          tabBarIcon: ({ color, size }) => <Feather name="calendar" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="care"
         options={{
           title: t("tab.care"),

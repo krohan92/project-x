@@ -151,6 +151,32 @@ export default function Community() {
           </View>
           <Feather name="chevron-right" size={18} color={colors.muted} />
         </Pressable>
+
+        {allSpaces.length > 0 && (
+          <View style={{ marginTop: spacing.md }}>
+            <Txt weight="500" style={{ marginBottom: spacing.sm, fontSize: fontSize.sm, color: colors.muted }}>
+              CULTURAL CIRCLES
+            </Txt>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+              {allSpaces.map((s) => {
+                const isJoined = joined.includes(s.key);
+                return (
+                  <Pressable
+                    key={s.key}
+                    testID={`circle-preview-${s.key}`}
+                    onPress={() => toggleJoin(s.key)}
+                    style={[styles.circleCard, isJoined && styles.circleCardActive]}
+                  >
+                    <Txt weight="500" style={{ fontSize: fontSize.sm }}>{s.label}</Txt>
+                    <Txt style={{ color: colors.muted, fontSize: 11, marginTop: 2 }}>
+                      {s.member_count > 0 ? `${s.member_count} joined` : "Be first"}
+                    </Txt>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
           <Pressable
             testID="space-general"
@@ -275,6 +301,11 @@ export default function Community() {
                 <View key={s.key} style={styles.spaceRow}>
                   <View style={{ flex: 1 }}>
                     <Txt weight="500" style={{ fontSize: fontSize.lg }}>{s.label}</Txt>
+                    <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: 2 }}>
+                      {s.member_count > 0
+                        ? `${s.member_count} ${s.member_count === 1 ? "mom has" : "moms have"} joined`
+                        : "Be the first to join"}
+                    </Txt>
                   </View>
                   <Pressable
                     testID={`join-${s.key}`}
@@ -329,6 +360,16 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginTop: spacing.md,
   },
+  circleCard: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minWidth: 120,
+  },
+  circleCardActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary + "30" },
   chipsRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm },
   chip: {
     height: 36,
