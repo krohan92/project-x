@@ -54,8 +54,13 @@ export default function NightLight() {
   };
 
   const onTap = (e: GestureResponderEvent) => {
+    // On web, locationX/Y from the touch event aren't always populated —
+    // fall back to a reasonable random spot so the tap still visibly does
+    // something instead of silently creating an off-screen star.
     const { locationX, locationY } = e.nativeEvent;
-    addStar(locationX, locationY);
+    const x = Number.isFinite(locationX) ? locationX : Math.random() * (SCREEN_W - 60) + 30;
+    const y = Number.isFinite(locationY) ? locationY : Math.random() * (SCREEN_H * 0.55) + SCREEN_H * 0.15;
+    addStar(x, y);
   };
 
   const releaseThought = () => {
