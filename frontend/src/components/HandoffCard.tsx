@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { View, StyleSheet, TextInput, Pressable, Share, Platform, Linking } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useFocusEffect } from "expo-router";
 import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 
@@ -70,12 +71,14 @@ const LEVEL_COLOR: Record<string, string> = {
   steady: colors.success,
   check_in: colors.warning,
   suggest: colors.error,
+  urgent: colors.error,
 };
 
 const LEVEL_LABEL: Record<string, string> = {
   steady: "Steady",
   check_in: "Worth a check-in",
   suggest: "Good time to tag out",
+  urgent: "Please check in",
 };
 
 const ROLE_OPTIONS: { value: string; label: string }[] = [
@@ -116,6 +119,9 @@ export function HandoffCard() {
   const [editingRole, setEditingRole] = useState(false);
   const [roleDraft, setRoleDraft] = useState("mom");
   const [savingRole, setSavingRole] = useState(false);
+  const [sosConfirm, setSosConfirm] = useState(false);
+  const [sosSending, setSosSending] = useState(false);
+  const [sosSent, setSosSent] = useState(false);
 
   const load = useCallback(async () => {
     if (!deviceId) return;
@@ -188,6 +194,19 @@ export function HandoffCard() {
       refreshAmbient();
     } catch {}
     setBusy(false);
+  };
+
+  const sendSOS = async () => {
+    if (!deviceId || !household) return;
+    setSosSending(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    try {
+      await api.sos({ household_code: household.household_code, device_id: deviceId });
+      setSosSent(true);
+      setTimeout(() => setSosSent(false), 4000);
+    } catch {}
+    setSosConfirm(false);
+    setSosSending(false);
   };
 
   const changeRole = async () => {
@@ -429,9 +448,28 @@ export function HandoffCard() {
               <Button label="I've got it — tag me in" onPress={tagIn} loading={busy} />
             )}
             {isMeOnDuty && (
-              <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
-                You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
-              </Txt>
+              <>
+                <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
+                  You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
+                </Txt>
+                {sosSent ? (
+                  <Txt style={{ color: colors.success, fontSize: fontSize.sm, textAlign: "center" }}>
+                    Sent — they've been notified.
+                  </Txt>
+                ) : sosConfirm ? (
+                  <Animated.View entering={FadeIn} style={{ flexDirection: "row", gap: spacing.sm }}>
+                    <Button label="Yes, notify them now" onPress={sendSOS} loading={sosSending} style={{ flex: 1 }} />
+                    <Button label="Cancel" variant="secondary" onPress={() => setSosConfirm(false)} style={{ flex: 1 }} />
+                  </Animated.View>
+                ) : (
+                  <Pressable onPress={() => setSosConfirm(true)} style={styles.sosBtn}>
+                    <Feather name="zap" size={16} color={colors.error} />
+                    <Txt style={{ color: colors.error, fontSize: fontSize.sm }} weight="500">
+                      Need help now — notify them
+                    </Txt>
+                  </Pressable>
+                )}
+              </>
             )}
             {Platform.OS === "web" && (
               <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>
@@ -498,6 +536,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radius.pill,
+  },
+  sosBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.error + "50",
+    backgroundColor: colors.error + "12",
   },
   codeBox: {
     backgroundColor: colors.surface,

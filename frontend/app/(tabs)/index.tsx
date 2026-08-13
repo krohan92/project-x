@@ -65,6 +65,7 @@ export default function Home() {
   const { profile } = useProfile();
 
   const [quote, setQuote] = useState<{ text: string; author: string } | null>(null);
+  const [weeklyInsight, setWeeklyInsight] = useState<string | null>(null);
   const [tips, setTips] = useState<any[]>([]);
   const [todayMood, setTodayMood] = useState<any | null>(null);
   const [checkedToday, setCheckedToday] = useState(false);
@@ -98,6 +99,10 @@ export default function Home() {
       setTodayMood(mt.entry);
       setMealCheckDone(meal.done);
       setAteToday(meal.entry?.ate_today ?? null);
+    } catch {}
+    try {
+      const insight = await api.weeklyInsights(profile.device_id);
+      setWeeklyInsight(insight?.reflection || null);
     } catch {}
   }, [profile]);
 
@@ -317,6 +322,22 @@ export default function Home() {
           </Pressable>
         </Animated.View>
 
+        {weeklyInsight && (
+          <Animated.View entering={FadeInDown.delay(240).duration(500)}>
+            <Card style={styles.insightCard} testID="weekly-insight-card">
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Feather name="trending-up" size={16} color={colors.brand} />
+                <Txt weight="500" style={{ fontSize: fontSize.sm, color: colors.muted }}>
+                  YOUR WEEK, NOTICED
+                </Txt>
+              </View>
+              <Txt style={{ color: colors.onSurface, lineHeight: 21, marginTop: spacing.sm }}>
+                {weeklyInsight}
+              </Txt>
+            </Card>
+          </Animated.View>
+        )}
+
         {/* Tips */}
         <Txt display style={styles.sectionTitle}>Gentle care for today</Txt>
         {tips.map((t, i) => (
@@ -424,6 +445,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
   },
+  linkIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   apptCard: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -456,6 +484,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.md,
     marginTop: spacing.md,
+  },
+  insightCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.brandTertiary + "20",
+    borderColor: colors.brandTertiary + "50",
   },
   moodDoneBlob: { width: 44, height: 44, borderRadius: radius.pill },
   quickRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },

@@ -25,7 +25,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { Txt } from "@/src/components/ui";
-import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
+import { spacing, radius, fontSize } from "@/src/theme/theme";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 

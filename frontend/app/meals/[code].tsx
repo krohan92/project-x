@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
-import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
+import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -52,7 +52,6 @@ async function saveToken(slotId: string, token: string) {
 export default function MealTrainJoin() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
 
   const [train, setTrain] = useState<any | null>(null);
   const [slots, setSlots] = useState<any[]>([]);
@@ -105,7 +104,7 @@ export default function MealTrainJoin() {
       await saveToken(slot.id, slot.slot_token);
       setSignupDate(null);
       await load();
-    } catch (e: any) {
+    } catch {
       // most likely someone else just took this date
       setSignupDate(null);
       await load();

@@ -303,7 +303,11 @@ def build_system_prompt(profile: Optional[dict]) -> str:
         "exercises if she's anxious or wound up, or the Tag Team hand-off feature if she sounds like she's "
         "been carrying things alone for a while — but only ever as a soft mention, never a pitch.\n"
         "- Normalize the hard parts of new motherhood. Remind her she is doing enough, in your own words each time.\n"
-        "- Encourage her to lean on her real-life support and her healthcare provider for medical concerns.\n\n"
+        "- Encourage her to lean on her real-life support and her healthcare provider for medical concerns.\n"
+        "- You have real tools to log feeds, diapers, naps, switch Tag Team duty, and check today's status — "
+        "use them naturally when she mentions these things (including by voice, so phrasing may be casual/spoken), "
+        "even mid-conversation. After using one, briefly confirm what you logged in plain language, then continue "
+        "the conversation naturally — don't make the confirmation the whole reply if she was also sharing feelings.\n\n"
         "SAFETY: If she expresses thoughts of harming herself or her baby, or seems in crisis, respond with calm compassion, "
         "take it seriously, and gently encourage her to reach out right now to the 988 Suicide & Crisis Lifeline (call or text 988) "
         "or Postpartum Support International (1-800-944-4773), and to a trusted person nearby. Never dismiss these feelings."
@@ -414,6 +418,121 @@ async def chat_history(session_id: str):
     return docs
 
 
+# ----- Chat tools (agentic actions Cuddle can actually take, not just discuss) -----
+CHAT_TOOLS = [
+    {
+        "name": "log_feed",
+        "description": "Log that the baby was fed. Use when she mentions feeding, a bottle, nursing, or an amount of milk/formula.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount_ml": {"type": "number", "description": "Amount in ml. Convert oz to ml (1oz \u2248 29.57ml) if she used oz."},
+                "minutes_ago": {"type": "number", "description": "Minutes since this happened. 0 if just now or unspecified."},
+            },
+            "required": ["amount_ml"],
+        },
+    },
+    {
+        "name": "log_diaper",
+        "description": "Log a diaper change. Use when she mentions a diaper, pee, poop, wet or dirty diaper.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "diaper_type": {"type": "string", "enum": ["pee", "poop", "both"]},
+                "minutes_ago": {"type": "number"},
+            },
+            "required": ["diaper_type"],
+        },
+    },
+    {
+        "name": "log_sleep",
+        "description": "Log a completed nap. Use when she mentions the baby slept or napped for some length of time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "duration_minutes": {"type": "number"},
+                "minutes_ago": {"type": "number", "description": "Minutes since the nap ENDED."},
+            },
+            "required": ["duration_minutes"],
+        },
+    },
+    {
+        "name": "tag_team_switch",
+        "description": "Switch Tag Team duty to whoever is chatting right now. Use for phrases like 'I've got it', 'switching to me', or 'I'm taking over'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_status",
+        "description": "Look up today's baby totals (feeds/diapers) and who's on Tag Team duty. Use when she asks how the day is going or who's on duty.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+
+async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str:
+    """Runs the actual action and returns a short factual result string for
+    Claude to relay back to her — this is what makes it agentic rather than
+    just talk: the DB genuinely changes."""
+    if name == "log_feed":
+        ml = tool_input.get("amount_ml")
+        mins_ago = tool_input.get("minutes_ago", 0) or 0
+        at = (datetime.now(timezone.utc) - timedelta(minutes=mins_ago)).isoformat()
+        await db.baby_logs.insert_one({
+            "device_id": device_id, "kind": "feed", "amount_ml": ml,
+            "at": at, "logged_at": now_iso(),
+        })
+        return f"Logged: fed {ml}ml."
+
+    if name == "log_diaper":
+        dtype = tool_input.get("diaper_type", "pee")
+        mins_ago = tool_input.get("minutes_ago", 0) or 0
+        at = (datetime.now(timezone.utc) - timedelta(minutes=mins_ago)).isoformat()
+        await db.baby_logs.insert_one({
+            "device_id": device_id, "kind": "diaper", "diaper_type": dtype,
+            "at": at, "logged_at": now_iso(),
+        })
+        return f"Logged: {dtype} diaper."
+
+    if name == "log_sleep":
+        dur = tool_input.get("duration_minutes")
+        mins_ago = tool_input.get("minutes_ago", 0) or 0
+        at = (datetime.now(timezone.utc) - timedelta(minutes=mins_ago + (dur or 0))).isoformat()
+        await db.baby_logs.insert_one({
+            "device_id": device_id, "kind": "sleep", "duration_minutes": dur,
+            "at": at, "logged_at": now_iso(),
+        })
+        return f"Logged: {dur} minute nap."
+
+    if name == "tag_team_switch":
+        h = await db.households.find_one({"members.device_id": device_id})
+        if not h:
+            return "She doesn't have Tag Team set up with a partner yet, so this couldn't be switched."
+        await db.households.update_one(
+            {"household_code": h["household_code"]},
+            {"$set": {"on_duty_device_id": device_id, "on_duty_since": now_iso()}},
+        )
+        return "Tag Team duty switched to her."
+
+    if name == "get_status":
+        device_ids = await _household_device_ids(device_id)
+        today = datetime.now(timezone.utc).date().isoformat()
+        logs = await db.baby_logs.find(
+            {"device_id": {"$in": device_ids}, "at": {"$gte": today}}
+        ).to_list(500)
+        feed_ml = sum(l.get("amount_ml") or 0 for l in logs if l["kind"] == "feed")
+        feed_count = sum(1 for l in logs if l["kind"] == "feed")
+        pee = sum(1 for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("pee", "both"))
+        poop = sum(1 for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("poop", "both"))
+        h = await db.households.find_one({"members.device_id": device_id})
+        duty_info = "No Tag Team household set up."
+        if h:
+            on_duty = next((m for m in h["members"] if m["device_id"] == h.get("on_duty_device_id")), None)
+            duty_info = f"{on_duty['name'] if on_duty else 'Someone'} is currently on Tag Team duty."
+        return f"Today so far: {feed_count} feeds ({round(feed_ml)}ml total), {pee} pee / {poop} poop diapers. {duty_info}"
+
+    return "Unknown action."
+
+
 @api_router.post("/chat")
 async def chat(req: ChatRequest):
     profile = await db.profiles.find_one({"device_id": req.device_id}, {"_id": 0})
@@ -448,7 +567,30 @@ async def chat(req: ChatRequest):
             max_tokens=1024,
             system=system_prompt,
             messages=anthropic_messages,
+            tools=CHAT_TOOLS,
         )
+        # Tool-use loop: Claude can actually log things or switch Tag Team
+        # duty mid-conversation, not just talk about it. Capped so a stuck
+        # loop can't run away.
+        for _ in range(3):
+            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            if not tool_uses:
+                break
+            anthropic_messages.append({
+                "role": "assistant",
+                "content": [b.model_dump() for b in response.content],
+            })
+            tool_results = []
+            for tu in tool_uses:
+                result_text = await _execute_chat_tool(tu.name, tu.input, req.device_id)
+                tool_results.append({
+                    "type": "tool_result", "tool_use_id": tu.id, "content": result_text,
+                })
+            anthropic_messages.append({"role": "user", "content": tool_results})
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=1024,
+                system=system_prompt, messages=anthropic_messages, tools=CHAT_TOOLS,
+            )
         reply = "".join(
             block.text for block in response.content if block.type == "text"
         )
@@ -1345,6 +1487,21 @@ async def compute_handoff_score(household: dict) -> dict:
         level = "steady"
         message = "Things look steady right now."
 
+    # Automatic escalation: if she's been on a long stretch AND hasn't eaten
+    # today AND the baby hasn't had a logged sleep today, that's a genuinely
+    # different situation than ordinary fatigue — surface it plainly and
+    # push immediately, not gated behind the normal threshold-crossing logic.
+    today = datetime.now(timezone.utc).date().isoformat()
+    meal_today = await db.meal_checkins.find_one({"device_id": on_duty_id, "date": today})
+    ate_today = bool(meal_today and meal_today.get("ate_today"))
+    sleep_logged_today = await db.baby_logs.count_documents(
+        {"device_id": on_duty_id, "kind": "sleep", "at": {"$gte": today}}
+    )
+    needs_urgent_check = hours_on_duty >= 5 and not ate_today and sleep_logged_today == 0
+    if needs_urgent_check:
+        level = "urgent"
+        message = "She's been going for a while and hasn't logged eating or a break today — this might be more than the usual stretch."
+
     other_member = next(
         (m for m in household["members"] if m["device_id"] != on_duty_id), None
     )
@@ -1363,6 +1520,21 @@ async def compute_handoff_score(household: dict) -> dict:
         await db.households.update_one(
             {"household_code": household["household_code"]},
             {"$set": {"last_notified_level": level}},
+        )
+
+    # Urgent escalation pushes at most once per day (its own flag, separate
+    # from the normal level tracking above) so it can't spam even if this
+    # gets computed on every poll throughout a long, hard day.
+    if level == "urgent" and household.get("last_urgent_push_date") != today and other_member:
+        on_duty_name = on_duty_member.get("name") if on_duty_member else "She"
+        await send_push(
+            other_member["device_id"],
+            "Cuddle · Check on her",
+            f"{on_duty_name} hasn't logged eating or a break today after {round(hours_on_duty)}+ hours — she could probably use you right now.",
+        )
+        await db.households.update_one(
+            {"household_code": household["household_code"]},
+            {"$set": {"last_urgent_push_date": today}},
         )
 
     return {
@@ -1388,6 +1560,34 @@ async def compute_handoff_score(household: dict) -> dict:
 async def handoff_score(household_code: str):
     h = await _get_household(household_code)
     return await compute_handoff_score(h)
+
+
+class SOSRequest(BaseModel):
+    household_code: str
+    device_id: str
+    note: Optional[str] = None
+
+
+@api_router.post("/handoff/sos")
+async def handoff_sos(s: SOSRequest):
+    """One tap, no calling. Fires immediately — no score threshold, no
+    once-a-day cap. This is for right now, not a nudge."""
+    h = await _get_household(s.household_code)
+    sender = next((m for m in h["members"] if m["device_id"] == s.device_id), None)
+    other_member = next((m for m in h["members"] if m["device_id"] != s.device_id), None)
+    sender_name = sender.get("name") if sender else "She"
+
+    if other_member:
+        body = f"{sender_name} needs you right now"
+        if s.note:
+            body += f": {s.note}"
+        await send_push(other_member["device_id"], "Cuddle · Need you now", body)
+
+    await db.sos_events.insert_one({
+        "household_code": s.household_code, "device_id": s.device_id,
+        "note": s.note, "created_at": now_iso(),
+    })
+    return {"ok": True, "notified": other_member is not None}
 
 
 @api_router.post("/handoff/switch")
@@ -1587,6 +1787,32 @@ async def recovery_checkin(c: RecoveryCheckinCreate):
     doc["created_at"] = now_iso()
     has_warning = len(c.symptoms) > 0
     doc["has_warning_sign"] = has_warning
+
+    # A tailored explanation of THIS specific combination, on top of the
+    # static warning-sign list — still never a diagnosis, just clearer than
+    # a generic "contact your provider" for every possible combination.
+    ai_triage_note = None
+    if has_warning and anthropic_client:
+        try:
+            symptom_labels = [w["label"] for w in RECOVERY_WARNING_SIGNS if w["key"] in c.symptoms]
+            prompt = (
+                "A postpartum mom just flagged these symptoms in a recovery check-in: "
+                + "; ".join(symptom_labels) + ". "
+                + (f"Pain level: {c.pain_level}/5. " if c.pain_level else "")
+                + (f"Bleeding: {c.bleeding_level}. " if c.bleeding_level else "")
+                + "In ONE short, calm sentence, explain why this specific combination is worth taking "
+                "seriously (or note if one piece matters more than the others). Do not diagnose. End by "
+                "telling her plainly to contact her provider or go to the ER now."
+            )
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=150,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_triage_note = "".join(b.text for b in response.content if b.type == "text").strip()
+        except Exception:
+            logger.exception("recovery triage AI failed")
+    doc["ai_triage_note"] = ai_triage_note
+
     await db.recovery_checkins.insert_one(dict(doc))
     doc.pop("_id", None)
     return doc
@@ -1984,6 +2210,83 @@ async def meetup_reflection(meetup_id: str, r: MeetupReflection):
     })
 
     doc.pop("_id", None)
+    return doc
+
+
+# ----- Weekly Insights (agentic — gathers real data, writes something new) -----
+def _week_start_iso(d: date) -> str:
+    monday = d - timedelta(days=d.weekday())
+    return monday.isoformat()
+
+
+@api_router.get("/insights/weekly/{device_id}")
+async def weekly_insights(device_id: str, force: bool = False):
+    week_of = _week_start_iso(datetime.now(timezone.utc).date())
+
+    if not force:
+        cached = await db.weekly_insights.find_one({"device_id": device_id, "week_of": week_of}, {"_id": 0})
+        if cached:
+            return cached
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    moods = await db.moods.find(
+        {"device_id": device_id, "created_at": {"$gte": week_ago}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(50)
+
+    device_ids = await _household_device_ids(device_id)
+    household = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    balance_note = None
+    if household and len(household.get("members", [])) > 1:
+        logs_week = await db.baby_logs.find(
+            {"device_id": {"$in": device_ids}, "at": {"$gte": week_ago}}
+        ).to_list(1000)
+        counts: dict = {}
+        for l in logs_week:
+            counts[l["device_id"]] = counts.get(l["device_id"], 0) + 1
+        if counts:
+            total = sum(counts.values())
+            mine = counts.get(device_id, 0)
+            balance_note = f"She logged {round(mine / total * 100)}% of {total} baby-care actions this week."
+
+    meetups_attended = await db.meetup_reflections.find(
+        {"device_id": device_id, "created_at": {"$gte": week_ago}}, {"_id": 0}
+    ).to_list(20)
+
+    if not moods and not meetups_attended:
+        return {"week_of": week_of, "reflection": None, "has_data": False}
+
+    mood_summary = ", ".join(str(m.get("mood")) for m in moods if m.get("mood") is not None) or "no mood check-ins logged"
+    meetup_summary = f"{len(meetups_attended)} mom meetup(s) attended" if meetups_attended else "no meetups attended"
+
+    reflection = None
+    if anthropic_client:
+        try:
+            prompt = (
+                f"Here's a postpartum mom's last 7 days: mood check-in scores (1-5 scale) were: {mood_summary}. "
+                f"{meetup_summary}. " + (balance_note + " " if balance_note else "") +
+                "Write a short (3-4 sentence), warm, specific weekly reflection — notice a real pattern in this "
+                "data (not generic advice), and end with ONE small, concrete suggestion for the coming week. "
+                "Never diagnose. Speak directly to her, second person."
+            )
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=250,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            reflection = "".join(b.text for b in response.content if b.type == "text").strip()
+        except Exception:
+            logger.exception("weekly insights AI failed")
+
+    doc = {
+        "device_id": device_id,
+        "week_of": week_of,
+        "reflection": reflection,
+        "has_data": True,
+        "generated_at": now_iso(),
+    }
+    await db.weekly_insights.update_one(
+        {"device_id": device_id, "week_of": week_of}, {"$set": doc}, upsert=True,
+    )
     return doc
 
 

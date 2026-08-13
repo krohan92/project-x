@@ -52,6 +52,17 @@ export type Profile = {
   concerns: string[];
   postpartum_appt_done?: boolean;
   created_at?: string;
+  // Set via /beacon/settings — optional, opt-in beacon/cultural-matching fields
+  email?: string | null;
+  phone?: string | null;
+  baby_age_weeks?: number | null;
+  due_date?: string | null;
+  timezone?: string | null;
+  language?: string | null;
+  ethnicity?: string | null;
+  matching_preference?: string | null;
+  display_tags?: boolean | null;
+  allow_cultural_match?: boolean | null;
 };
 
 export const api = {
@@ -217,4 +228,10 @@ export const api = {
   meetupIcsUrl: (meetupId: string) => `${API}/meetups/${meetupId}/calendar.ics`,
   submitMeetupReflection: (meetupId: string, body: { device_id: string; mood_after: number; note?: string }) =>
     req(`/meetups/${meetupId}/reflection`, { method: "POST", body: JSON.stringify(body) }),
+
+  // ----- Agentic features -----
+  sos: (body: { household_code: string; device_id: string; note?: string }) =>
+    req(`/handoff/sos`, { method: "POST", body: JSON.stringify(body) }),
+  weeklyInsights: (deviceId: string, force = false) =>
+    req(`/insights/weekly/${deviceId}${force ? "?force=true" : ""}`),
 };

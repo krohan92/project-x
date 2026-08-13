@@ -20,6 +20,7 @@ import { Txt } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { useVoiceInput } from "@/src/lib/voice-input";
 
 const CHAT_BG =
   "https://images.unsplash.com/photo-1547148903-55829acc03a5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxnZW50bGUlMjBuYXR1cmUlMjBzb2Z0JTIwY2xheSUyMHRleHR1cmVzfGVufDB8fHx8MTc4Mjg3Mjk5OHww&ixlib=rb-4.1.0&q=85";
@@ -89,6 +90,11 @@ export default function Talk() {
   };
 
   const empty = messages.length === 0;
+
+  const voice = useVoiceInput((text) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    send(text);
+  });
 
   return (
     <KeyboardAvoidingView
@@ -190,11 +196,20 @@ export default function Talk() {
 
       {/* Input */}
       <View style={[styles.inputBar, { paddingBottom: insets.bottom + spacing.sm }]}>
+        {voice.available && (
+          <Pressable
+            testID="chat-mic-button"
+            onPress={() => (voice.listening ? voice.stop() : voice.start())}
+            style={[styles.micBtn, voice.listening && styles.micBtnActive]}
+          >
+            <Feather name="mic" size={18} color={voice.listening ? "#fff" : colors.brand} />
+          </Pressable>
+        )}
         <TextInput
           testID="chat-input"
           value={input}
           onChangeText={setInput}
-          placeholder="Type from the heart..."
+          placeholder={voice.listening ? "Listening..." : "Type from the heart, or say it — try 'log a 4oz feed'"}
           placeholderTextColor={colors.muted}
           style={styles.input}
           multiline
@@ -315,4 +330,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  micBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  micBtnActive: { backgroundColor: colors.error, borderColor: colors.error },
 });

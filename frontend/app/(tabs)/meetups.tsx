@@ -21,9 +21,6 @@ import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 
-const WHEN_OPTIONS = [
-  { label: "This Sat", offsetDays: null }, // computed below
-];
 const TIME_OPTIONS = ["9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM", "3:00 PM", "5:00 PM"];
 
 function nextWeekdayDates() {
@@ -60,7 +57,7 @@ export default function Meetups() {
   const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { deviceId, profile } = useProfile();
+  const { deviceId } = useProfile();
 
   const [neighborhoods, setNeighborhoods] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);

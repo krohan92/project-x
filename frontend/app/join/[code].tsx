@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { View, StyleSheet, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
 import { Txt, Card, Button } from "@/src/components/ui";
