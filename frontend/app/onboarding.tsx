@@ -7,6 +7,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -62,6 +63,7 @@ export default function Onboarding() {
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [babyName, setBabyName] = useState("");
@@ -103,8 +105,15 @@ export default function Onboarding() {
   };
 
   const finish = async () => {
-    if (!deviceId) return;
+    if (saving) return; // guard against double-taps while a request is in flight
+    if (!deviceId) {
+      // deviceId should already be loaded by this point in the flow, but if
+      // it somehow isn't, tell her instead of silently doing nothing.
+      Alert.alert("One moment", "Still getting things ready — please try again in a second.");
+      return;
+    }
     setSaving(true);
+    setErrorMsg(null);
     const deliveryDate =
       weeksPostpartum != null
         ? new Date(Date.now() - weeksPostpartum * 7 * 86400000)
@@ -130,8 +139,12 @@ export default function Onboarding() {
       }
       await refresh();
       router.replace("/(tabs)");
-    } catch {
+    } catch (e: any) {
       setSaving(false);
+      const msg = "Couldn't save just now — check your connection and try again.";
+      setErrorMsg(msg);
+      Alert.alert("Something went wrong", msg);
+      console.log("onboarding save failed:", e?.message || e);
     }
   };
 
@@ -390,6 +403,11 @@ export default function Onboarding() {
         </ScrollView>
 
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
+          {errorMsg && (
+            <Txt style={{ color: colors.error, fontSize: fontSize.sm, textAlign: "center", marginBottom: spacing.sm }}>
+              {errorMsg}
+            </Txt>
+          )}
           <Button
             testID="onboarding-next-button"
             label={step === TOTAL - 1 ? "Enter Cuddle" : "Continue"}
