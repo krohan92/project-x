@@ -104,6 +104,7 @@ export default function Home() {
       const insight = await api.weeklyInsights(profile.device_id);
       setWeeklyInsight(insight?.reflection || null);
     } catch {}
+    api.wellbeingSelfCheck(profile.device_id).catch(() => {});
   }, [profile]);
 
   useFocusEffect(

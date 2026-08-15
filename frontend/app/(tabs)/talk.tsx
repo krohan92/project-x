@@ -104,6 +104,13 @@ export default function Talk() {
     >
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
+        <Pressable
+          testID="chat-back-button"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={10}
+        >
+          <Feather name="arrow-left" size={22} color={colors.onSurface} />
+        </Pressable>
         <View style={styles.avatar}>
           <Feather name="feather" size={18} color={colors.onBrandPrimary} />
         </View>

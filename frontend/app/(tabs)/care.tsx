@@ -111,7 +111,7 @@ export default function Care() {
               <Feather name="gift" size={20} color="#B5624E" />
             </View>
             <View style={{ flex: 1 }}>
-              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Celebrations & Events</Txt>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Mama's Calendar</Txt>
               <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
                 Birthdays, showers, appointments — scan a flyer or add manually
               </Txt>

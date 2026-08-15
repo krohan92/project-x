@@ -74,6 +74,31 @@ const VENUE_TYPE_COLORS: Record<string, string> = {
   other: "#B6AFA3",
 };
 
+// What each meetup type actually prioritizes — this is what makes picking
+// "Baby Date" vs "Mom Date" mean something, instead of just coloring a dot.
+// Kid-friendly outdoor spots float to the top for a baby date; a cafe or
+// winery floats up for a mom date; venue order stays as-is for everything
+// else.
+const CATEGORY_VENUE_PREFERENCE: Record<string, string[]> = {
+  baby_date: ["park", "trail", "clubhouse"],
+  mom_date: ["cafe", "winery", "yoga_studio"],
+  trail_walk: ["trail", "park"],
+  yoga: ["yoga_studio"],
+  other: [],
+};
+
+function sortVenuesForCategory(venues: any[], category: string) {
+  const preferred = CATEGORY_VENUE_PREFERENCE[category] || [];
+  if (preferred.length === 0) return venues;
+  return [...venues].sort((a, b) => {
+    const ai = preferred.indexOf(a.type);
+    const bi = preferred.indexOf(b.type);
+    const aRank = ai === -1 ? preferred.length : ai;
+    const bRank = bi === -1 ? preferred.length : bi;
+    return aRank - bRank;
+  });
+}
+
 export default function Meetups() {
   const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
@@ -119,9 +144,19 @@ export default function Meetups() {
     setDateIso(nextWeekdayDates()[0]?.iso || "");
     try {
       const v = await api.meetupVenues(neighborhood);
-      setVenues(v);
-      setVenueName(v[0]?.name || "");
+      const sorted = sortVenuesForCategory(v, cat);
+      setVenues(sorted);
+      setVenueName(sorted[0]?.name || "");
     } catch {}
+  };
+
+  const chooseCategory = (key: string) => {
+    setCat(key);
+    setVenues((prev) => {
+      const sorted = sortVenuesForCategory(prev, key);
+      setVenueName(sorted[0]?.name || "");
+      return sorted;
+    });
   };
 
   const submit = async () => {
@@ -129,7 +164,7 @@ export default function Meetups() {
     setPosting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      await api.createMeetup({
+      const created = await api.createMeetup({
         device_id: deviceId,
         title: title.trim(),
         category: cat,
@@ -142,6 +177,9 @@ export default function Meetups() {
       setTitle(""); setDescription(""); setCustomVenue("");
       setComposeOpen(false);
       await load(neighborhood, category);
+      // Land right on the invite screen — creating a meetup with no one
+      // else in it isn't useful until it's actually shared.
+      if (created?.meetup_id) router.push(`/meetup/${created.meetup_id}`);
     } catch {}
     setPosting(false);
   };
@@ -245,13 +283,16 @@ export default function Meetups() {
               <Txt weight="500">Type</Txt>
               <View style={styles.chipWrap}>
                 {categories.map((c) => (
-                  <Pressable key={c.key} onPress={() => setCat(c.key)} style={[styles.formChip, cat === c.key && styles.chipActive]}>
+                  <Pressable key={c.key} onPress={() => chooseCategory(c.key)} style={[styles.formChip, cat === c.key && styles.chipActive]}>
                     <Txt style={{ color: cat === c.key ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>{c.label}</Txt>
                   </Pressable>
                 ))}
               </View>
 
               <Txt weight="500">Where</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: -spacing.sm }}>
+                Sorted for a {(categories.find((c) => c.key === cat)?.label || "").toLowerCase()} — pick any spot below
+              </Txt>
               <View style={{ gap: spacing.sm }}>
                 {venues.map((v) => (
                   <Pressable

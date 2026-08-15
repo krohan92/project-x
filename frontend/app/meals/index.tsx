@@ -12,7 +12,11 @@ import { useProfile } from "@/src/lib/profile-context";
 
 function appBaseUrl() {
   if (Platform.OS === "web" && typeof window !== "undefined") return window.location.origin;
-  return null;
+  // On native there's no window.location — fall back to the deployed web
+  // URL (set at build time) so the link in the share message always
+  // actually exists, instead of silently telling people "I'll send you
+  // the link" and then having no link to send.
+  return process.env.EXPO_PUBLIC_APP_URL || null;
 }
 
 function dayLabel(iso: string) {
@@ -68,8 +72,8 @@ export default function Meals() {
     const base = appBaseUrl();
     const link = base ? `${base}/meals/${train.meal_train_code}` : null;
     const message = link
-      ? `Would you help bring a meal for us? Pick any open day here: ${link}`
-      : `Would you help bring a meal for us? I'll send you the link to pick a day.`;
+      ? `Hi! We'd love a little help with meals right now — would you be up for bringing one? Just pick whatever day works for you and bring whatever you like: ${link}`
+      : `Hi! We'd love a little help with meals right now — would you be up for bringing one? Just pick whatever day works for you and bring whatever you like. I'll send you the link in a sec.`;
     try {
       if (Platform.OS !== "web") {
         await Share.share({ message });

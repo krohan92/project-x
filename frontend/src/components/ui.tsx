@@ -18,16 +18,26 @@ export function Txt({
   weight,
   ...rest
 }: TextProps & { display?: boolean; italic?: boolean; weight?: "400" | "500" }) {
+  // On native, fontWeight has no effect when paired with a custom fontFamily
+  // unless a font file for that exact weight is loaded — iOS silently
+  // ignores it (or worse, substitutes the system font) rather than faking
+  // bold the way browsers do. So "medium" text needs to select an actually
+  // different, separately-loaded font file, not just a style property.
+  const isMedium = weight === "500";
   const family = display
     ? italic
       ? fonts.displayItalic
+      : isMedium
+      ? fonts.displayMedium
       : fonts.display
+    : isMedium
+    ? fonts.textMedium
     : fonts.text;
   return (
     <Text
       {...rest}
       style={[
-        { fontFamily: family, color: colors.onSurface, fontWeight: weight ?? "400" },
+        { fontFamily: family, color: colors.onSurface },
         style,
       ]}
     />

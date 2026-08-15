@@ -248,4 +248,10 @@ export const api = {
   deleteEvent: (eventId: string) => req(`/events/${eventId}`, { method: "DELETE" }),
   eventIcsUrl: (eventId: string) => `${API}/events/${eventId}/calendar.ics`,
   checkEventReminders: (deviceId: string) => req(`/events/${deviceId}/check-reminders`),
+
+  // ----- Catch Me Up -----
+  catchUp: (deviceId: string) => req(`/catchup/${deviceId}`),
+
+  // ----- Wellbeing self-check -----
+  wellbeingSelfCheck: (deviceId: string) => req(`/wellbeing/self-check/${deviceId}`),
 };

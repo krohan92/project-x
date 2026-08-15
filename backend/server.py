@@ -816,6 +816,7 @@ class ShopItemCreate(BaseModel):
     price_type: str = "free"  # free / low-cost / trade
     price: Optional[float] = None
     location_label: Optional[str] = None  # freeform area name, never precise geo
+    photo_base64: Optional[str] = None    # optional single photo, data URI-ready base64
 
 
 class ShopMessageCreate(BaseModel):
@@ -1535,12 +1536,20 @@ async def compute_handoff_score(household: dict) -> dict:
     # Urgent escalation pushes at most once per day (its own flag, separate
     # from the normal level tracking above) so it can't spam even if this
     # gets computed on every poll throughout a long, hard day.
-    if level == "urgent" and household.get("last_urgent_push_date") != today and other_member:
+    if level == "urgent" and household.get("last_urgent_push_date") != today:
         on_duty_name = on_duty_member.get("name") if on_duty_member else "She"
+        if other_member:
+            await send_push(
+                other_member["device_id"],
+                "Cuddle · Check on her",
+                f"{on_duty_name} hasn't logged eating or a break today after {round(hours_on_duty)}+ hours — she could probably use you right now.",
+            )
+        # And directly to her too — a partner check-in doesn't guarantee she
+        # actually eats or rests, so tell her too, not just about her.
         await send_push(
-            other_member["device_id"],
-            "Cuddle · Check on her",
-            f"{on_duty_name} hasn't logged eating or a break today after {round(hours_on_duty)}+ hours — she could probably use you right now.",
+            on_duty_id,
+            "Cuddle · Checking in on you",
+            f"It's been {round(hours_on_duty)}+ hours — have you had a chance to eat or catch a break? You matter here too.",
         )
         await db.households.update_one(
             {"household_code": household["household_code"]},
@@ -2505,6 +2514,106 @@ async def check_event_reminders(device_id: str):
             await db.personal_events.update_one({"event_id": ev["event_id"]}, {"$set": {"reminded": True}})
             fired.append(ev["event_id"])
     return {"fired": fired}
+
+
+# ----- Catch Me Up: a small, on-demand AI summary of what's going on right
+# now, gathered fresh each time it's opened rather than cached like weekly
+# insights — meant to be quick, not a report. -----
+@api_router.get("/catchup/{device_id}")
+async def catch_up(device_id: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    now = datetime.now(timezone.utc)
+
+    parts = []
+
+    # Tag Team status, if she has a household
+    household = await db.households.find_one({"members.device_id": device_id})
+    if household and len(household.get("members", [])) > 1:
+        score = await compute_handoff_score(household)
+        on_duty = next((m for m in household["members"] if m["device_id"] == household.get("on_duty_device_id")), None)
+        parts.append(f"Tag Team: {on_duty['name'] if on_duty else 'someone'} has been on duty, {score.get('message', '')}")
+
+    # Today's baby log totals
+    device_ids = await _household_device_ids(device_id)
+    logs_today = await db.baby_logs.find({"device_id": {"$in": device_ids}, "at": {"$gte": today}}).to_list(500)
+    feed_count = sum(1 for l in logs_today if l["kind"] == "feed")
+    diaper_count = sum(1 for l in logs_today if l["kind"] == "diaper")
+    parts.append(f"Today so far: {feed_count} feeds, {diaper_count} diaper changes logged.")
+
+    # Upcoming events in the next 3 days
+    soon = (now + timedelta(days=3)).date().isoformat()
+    upcoming = await db.personal_events.find(
+        {"device_id": device_id, "date": {"$gte": today, "$lte": soon}}
+    ).sort("date", 1).to_list(5)
+    if upcoming:
+        titles = ", ".join(f"{e['title']} ({e['date']})" for e in upcoming)
+        parts.append(f"Coming up in the next few days: {titles}.")
+
+    # Meetups she's going to, soon
+    my_meetups = await db.meetups.find(
+        {"attendees.device_id": device_id, "date": {"$gte": today, "$lte": soon}}
+    ).sort("date", 1).to_list(5)
+    if my_meetups:
+        titles = ", ".join(f"{m['title']} ({m['date']})" for m in my_meetups)
+        parts.append(f"Meetups she's going to soon: {titles}.")
+
+    raw_context = " ".join(parts) or "Nothing much logged yet — she's just getting started with the app."
+
+    summary = raw_context
+    if anthropic_client:
+        try:
+            prompt = (
+                f"Here's a snapshot of a postpartum mom's app right now: {raw_context} "
+                "Write a short (2-3 sentence), warm, casual 'catching you up' message — like a quick "
+                "friend filling her in, not a report. If there's genuinely nothing going on, say so kindly "
+                "and warmly rather than padding it out. Never diagnose or give medical advice."
+            )
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=180,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            summary = "".join(b.text for b in response.content if b.type == "text").strip()
+        except Exception:
+            logger.exception("catch up AI failed")
+
+    return {"summary": summary, "generated_at": now_iso()}
+
+
+# ----- Self wellbeing nudge — reminds HER directly, not just a Tag Team
+# partner, and works even without a household set up at all. -----
+@api_router.get("/wellbeing/self-check/{device_id}")
+async def wellbeing_self_check(device_id: str):
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+
+    # Only worth checking once the day's genuinely underway — no point
+    # nudging at 8am about not having eaten yet.
+    if now.hour < 13:
+        return {"nudged": False}
+
+    tracker = await db.self_nudge_tracker.find_one({"device_id": device_id})
+    if tracker and tracker.get("last_nudge_date") == today:
+        return {"nudged": False}  # already nudged once today
+
+    meal_today = await db.meal_checkins.find_one({"device_id": device_id, "date": today})
+    ate_today = bool(meal_today and meal_today.get("ate_today"))
+    sleep_logged_today = await db.baby_logs.count_documents(
+        {"device_id": device_id, "kind": "sleep", "at": {"$gte": today}}
+    )
+
+    if ate_today or sleep_logged_today > 0:
+        return {"nudged": False}
+
+    await send_push(
+        device_id,
+        "Cuddle · Checking in on you",
+        "It's been a while — have you had a chance to eat or catch a break today? You matter here too.",
+        urgent=False,
+    )
+    await db.self_nudge_tracker.update_one(
+        {"device_id": device_id}, {"$set": {"last_nudge_date": today}}, upsert=True,
+    )
+    return {"nudged": True}
 
 
 app.include_router(api_router)

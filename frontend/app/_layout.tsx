@@ -17,6 +17,8 @@ import { ProfileProvider } from "@/src/lib/profile-context";
 import { LanguageProvider } from "@/src/lib/i18n";
 import { AmbientProvider } from "@/src/lib/ambient-context";
 import { colors } from "@/src/theme/theme";
+import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
+import { Quicksand_500Medium } from "@expo-google-fonts/quicksand";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -30,7 +32,9 @@ export default function RootLayout() {
   const [appFontsLoaded, appFontsError] = useFonts({
     Fraunces: require("../assets/fonts/Fraunces-Regular.ttf"),
     "Fraunces-Italic": require("../assets/fonts/Fraunces-Italic.ttf"),
+    "Fraunces-Medium": Fraunces_500Medium,
     Quicksand: require("../assets/fonts/Quicksand-Regular.ttf"),
+    "Quicksand-Medium": Quicksand_500Medium,
   });
 
   const ready = (iconsLoaded || iconsError) && (appFontsLoaded || appFontsError);

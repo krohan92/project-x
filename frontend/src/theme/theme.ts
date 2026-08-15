@@ -73,8 +73,10 @@ export const radius = {
 
 export const fonts = {
   display: "Fraunces",
+  displayMedium: "Fraunces-Medium",
   displayItalic: "Fraunces-Italic",
   text: "Quicksand",
+  textMedium: "Quicksand-Medium",
 };
 
 export const fontSize = {

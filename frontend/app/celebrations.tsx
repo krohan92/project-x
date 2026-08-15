@@ -96,7 +96,7 @@ export default function Celebrations() {
           <Feather name="arrow-left" size={22} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Txt display style={{ fontSize: fontSize.xl }}>Celebrations & Events</Txt>
+          <Txt display style={{ fontSize: fontSize.xl }}>Mama's Calendar</Txt>
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Birthdays, showers, appointments — all in one place</Txt>
         </View>
       </View>

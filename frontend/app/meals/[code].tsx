@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
-import { useLocalSearchParams, useFocusEffect } from "expo-router";
+import { useLocalSearchParams, useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -52,6 +52,7 @@ async function saveToken(slotId: string, token: string) {
 export default function MealTrainJoin() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [train, setTrain] = useState<any | null>(null);
   const [slots, setSlots] = useState<any[]>([]);
@@ -133,6 +134,14 @@ export default function MealTrainJoin() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
+        <Pressable
+          testID="dinner-bell-back-button"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={10}
+          style={{ marginBottom: spacing.sm }}
+        >
+          <Feather name="arrow-left" size={22} color={colors.onSurface} />
+        </Pressable>
         <Txt display style={{ fontSize: fontSize.xl }}>{train?.title}</Txt>
         {train?.notes && <Txt style={{ color: colors.muted, marginTop: 4 }}>{train.notes}</Txt>}
       </View>

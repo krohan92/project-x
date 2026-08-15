@@ -3,6 +3,7 @@ import { View, StyleSheet, Pressable } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { Feather } from "@expo/vector-icons";
 
 import { Txt, Card, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, roleAccent } from "@/src/theme/theme";
@@ -45,6 +46,14 @@ export default function JoinHousehold() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.xl }]}>
+      <Pressable
+        testID="join-back-button"
+        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+        hitSlop={10}
+        style={{ marginLeft: spacing.lg }}
+      >
+        <Feather name="arrow-left" size={22} color={colors.onSurface} />
+      </Pressable>
       <Card style={{ gap: spacing.md, margin: spacing.lg }}>
         <Txt display style={{ fontSize: fontSize.xl }}>You've been invited to Cuddle</Txt>
         <Txt style={{ color: colors.muted }}>

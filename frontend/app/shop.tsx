@@ -14,6 +14,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
+import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
@@ -43,7 +45,7 @@ export default function Shop() {
   const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { profile, deviceId } = useProfile();
+  const { deviceId } = useProfile();
 
   const [items, setItems] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -60,6 +62,8 @@ export default function Shop() {
   const [description, setDescription] = useState("");
   const [locationLabel, setLocationLabel] = useState("");
   const [posting, setPosting] = useState(false);
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  const [photoPreviewUri, setPhotoPreviewUri] = useState<string | null>(null);
 
   const load = useCallback(async (c: string) => {
     try {
@@ -84,6 +88,25 @@ export default function Shop() {
   const resetForm = () => {
     setTitle(""); setCat("clothes"); setCondition(CONDITIONS[0]);
     setPriceType("free"); setPrice(""); setDescription(""); setLocationLabel("");
+    setPhotoBase64(null); setPhotoPreviewUri(null);
+  };
+
+  const pickPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      base64: true,
+      quality: 0.5,
+      allowsEditing: true,
+      aspect: [4, 3],
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    });
+    if (result.canceled || !result.assets?.[0]?.base64) return;
+    setPhotoBase64(result.assets[0].base64);
+    setPhotoPreviewUri(result.assets[0].uri);
   };
 
   const submitItem = async () => {
@@ -100,6 +123,7 @@ export default function Shop() {
         price_type: priceType,
         price: priceType === "low-cost" && price ? parseFloat(price) : null,
         location_label: locationLabel.trim() || null,
+        photo_base64: photoBase64 ? `data:image/jpeg;base64,${photoBase64}` : null,
       });
       resetForm();
       setComposeOpen(false);
@@ -178,11 +202,15 @@ export default function Shop() {
             style={styles.itemCard}
           >
             <View style={styles.itemIconWrap}>
-              <Feather
-                name={(categories.find((c) => c.key === item.category)?.icon || "box") as any}
-                size={22}
-                color={colors.brand}
-              />
+              {item.photo_base64 ? (
+                <Image source={{ uri: item.photo_base64 }} style={StyleSheet.absoluteFill} contentFit="cover" />
+              ) : (
+                <Feather
+                  name={(categories.find((c) => c.key === item.category)?.icon || "box") as any}
+                  size={22}
+                  color={colors.brand}
+                />
+              )}
             </View>
             <Txt weight="500" numberOfLines={2} style={{ marginTop: spacing.sm }}>{item.title}</Txt>
             <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: 2 }}>{item.condition}</Txt>
@@ -225,6 +253,17 @@ export default function Shop() {
                 placeholderTextColor={colors.muted}
                 style={styles.input}
               />
+
+              <Pressable testID="shop-photo-button" onPress={pickPhoto} style={styles.photoPicker}>
+                {photoPreviewUri ? (
+                  <Image source={{ uri: photoPreviewUri }} style={styles.photoPreview} contentFit="cover" />
+                ) : (
+                  <>
+                    <Feather name="camera" size={20} color={colors.brand} />
+                    <Txt style={{ color: colors.brand, fontSize: fontSize.sm }}>Add a photo (optional)</Txt>
+                  </>
+                )}
+              </Pressable>
 
               <Txt weight="500">Category</Txt>
               <View style={styles.chipWrap}>
@@ -337,6 +376,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brandTertiary + "50",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
   priceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm },
   fab: {
@@ -362,6 +402,19 @@ const styles = StyleSheet.create({
     maxHeight: "88%",
   },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md },
+  photoPicker: {
+    height: 140,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    overflow: "hidden",
+  },
+  photoPreview: { width: "100%", height: "100%" },
   input: {
     backgroundColor: colors.surfaceSecondary,
     borderRadius: radius.md,

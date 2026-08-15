@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, TextInput, Platform, Linking } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, TextInput, Platform, Linking, Share } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -83,6 +83,32 @@ export default function MeetupDetail() {
     }
   };
 
+  const shareInvite = async () => {
+    if (!meetup) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const base =
+      Platform.OS === "web" && typeof window !== "undefined"
+        ? window.location.origin
+        : process.env.EXPO_PUBLIC_APP_URL || null;
+    const link = base ? `${base}/meetup/${meetup.meetup_id}` : null;
+    const message = link
+      ? `Want to join? ${meetup.title} — ${dayLabel(meetup.date)} at ${meetup.time_label || "TBD"}, ${meetup.venue_name}. Tap here: ${link}`
+      : `Want to join? ${meetup.title} — ${dayLabel(meetup.date)} at ${meetup.time_label || "TBD"}, ${meetup.venue_name}.`;
+    try {
+      if (Platform.OS !== "web") {
+        await Share.share({ message });
+        return;
+      }
+      if (typeof navigator !== "undefined" && (navigator as any).share) {
+        await (navigator as any).share({ title: meetup.title, text: message, url: link || undefined });
+        return;
+      }
+      if (typeof navigator !== "undefined" && navigator.clipboard && link) {
+        await navigator.clipboard.writeText(message);
+      }
+    } catch {}
+  };
+
   const submitReflection = async () => {
     if (!deviceId || !meetup || reflectMood == null) return;
     setReflectSubmitting(true);
@@ -130,6 +156,11 @@ export default function MeetupDetail() {
         </Card>
 
         {meetup.description && <Txt style={{ color: colors.onSurface, lineHeight: 22 }}>{meetup.description}</Txt>}
+
+        <Button label="Invite people" onPress={shareInvite} icon={<Feather name="share" size={16} color={colors.onBrandPrimary} />} />
+        <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>
+          Meetups don't invite anyone on their own — share this with whoever you want there.
+        </Txt>
 
         <Button label="Add to Calendar" variant="secondary" onPress={addToCalendar} />
         <Txt style={{ color: colors.muted, fontSize: 11, textAlign: "center" }}>

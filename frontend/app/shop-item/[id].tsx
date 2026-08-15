@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
+import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -63,9 +64,13 @@ export default function ShopItemDetail() {
         </Pressable>
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
-        <View style={styles.iconWrap}>
-          <Feather name="gift" size={36} color={colors.brand} />
-        </View>
+        {item.photo_base64 ? (
+          <Image source={{ uri: item.photo_base64 }} style={styles.photo} contentFit="cover" />
+        ) : (
+          <View style={styles.iconWrap}>
+            <Feather name="gift" size={36} color={colors.brand} />
+          </View>
+        )}
         <Txt display style={{ fontSize: fontSize["2xl"] }}>{item.title}</Txt>
         <View style={styles.metaRow}>
           <View style={styles.pill}>
@@ -100,6 +105,7 @@ export default function ShopItemDetail() {
 
 const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  photo: { width: "100%", height: 220, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary },
   iconWrap: {
     width: 64,
     height: 64,

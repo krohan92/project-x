@@ -143,14 +143,6 @@ export default function Community() {
             <Txt style={{ color: colors.onBrandSecondary, fontSize: fontSize.sm }}>{t("circle.spaces")}</Txt>
           </Pressable>
         </View>
-        <Pressable testID="give-share-banner" onPress={() => router.push("/shop")} style={styles.shopBanner}>
-          <Feather name="gift" size={18} color={colors.brand} />
-          <View style={{ flex: 1 }}>
-            <Txt weight="500">Give & Share</Txt>
-            <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Free & low-cost baby things, mom to mom</Txt>
-          </View>
-          <Feather name="chevron-right" size={18} color={colors.muted} />
-        </Pressable>
 
         {allSpaces.length > 0 && (
           <View style={{ marginTop: spacing.md }}>
