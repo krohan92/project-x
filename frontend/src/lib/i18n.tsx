@@ -58,7 +58,7 @@ const en: Dict = {
   "settings.privacy": "Your cultural data is optional, editable, and deletable anytime. It is never sold or shared with third parties.",
   "settings.none": "Not set",
 
-  "track.title": "Baby & Me",
+  "track.title": "Track & Team",
   "track.logFeed": "Feed",
   "track.logSleep": "Sleep",
   "track.logDiaper": "Diaper",
@@ -133,7 +133,7 @@ const es: Dict = {
   "settings.privacy": "Tus datos culturales son opcionales, editables y eliminables en cualquier momento. Nunca se venden ni se comparten.",
   "settings.none": "Sin definir",
 
-  "track.title": "Bebé y Yo",
+  "track.title": "Registro y Equipo",
   "track.logFeed": "Toma",
   "track.logSleep": "Sueño",
   "track.logDiaper": "Pañal",
@@ -208,7 +208,7 @@ const hi: Dict = {
   "settings.privacy": "आपका सांस्कृतिक डेटा वैकल्पिक, संपादन योग्य और कभी भी हटाने योग्य है। इसे कभी बेचा या साझा नहीं किया जाता।",
   "settings.none": "निर्धारित नहीं",
 
-  "track.title": "बच्चा और मैं",
+  "track.title": "ट्रैक और टीम",
   "track.logFeed": "दूध",
   "track.logSleep": "नींद",
   "track.logDiaper": "डायपर",

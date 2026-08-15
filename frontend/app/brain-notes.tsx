@@ -12,8 +12,7 @@ import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 
 const CATEGORIES = [
-  { key: "question", label: "Ask doctor", icon: "help-circle", color: "#93B4D6" },
-  { key: "appointment", label: "Appointment", icon: "calendar", color: "#E8A9BC" },
+  { key: "doctor", label: "For the Doctor", icon: "clipboard", color: "#93B4D6" },
   { key: "reminder", label: "Remember", icon: "bell", color: "#DEB068" },
   { key: "other", label: "Other", icon: "edit-3", color: "#B6AFA3" },
 ];
@@ -26,6 +25,7 @@ export default function BrainNotes() {
   const [notes, setNotes] = useState<any[]>([]);
   const [text, setText] = useState("");
   const [category, setCategory] = useState("other");
+  const [filter, setFilter] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
@@ -74,18 +74,42 @@ export default function BrainNotes() {
         </View>
       </View>
 
+      <View style={styles.filterRow}>
+        <Pressable
+          onPress={() => setFilter(null)}
+          style={[styles.filterChip, filter === null && styles.filterChipActive]}
+        >
+          <Txt style={{ fontSize: fontSize.sm, color: filter === null ? colors.onSurface : colors.muted }}>All</Txt>
+        </Pressable>
+        {CATEGORIES.map((c) => (
+          <Pressable
+            key={c.key}
+            testID={`brain-notes-filter-${c.key}`}
+            onPress={() => setFilter(filter === c.key ? null : c.key)}
+            style={[styles.filterChip, filter === c.key && { backgroundColor: c.color + "30", borderColor: c.color }]}
+          >
+            <Feather name={c.icon as any} size={12} color={filter === c.key ? colors.onSurface : colors.muted} />
+            <Txt style={{ fontSize: fontSize.sm, color: filter === c.key ? colors.onSurface : colors.muted, marginLeft: 4 }}>
+              {c.label}
+            </Txt>
+          </Pressable>
+        ))}
+      </View>
+
       <FlatList
-        data={notes}
+        data={filter ? notes.filter((n) => n.category === filter) : notes}
         keyExtractor={(n) => n.id}
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.sm, paddingBottom: spacing.xl }}
         ListEmptyComponent={
           <Card style={{ alignItems: "center", paddingVertical: spacing.xl }}>
             <Feather name="feather" size={26} color={colors.borderStrong} />
-            <Txt style={{ color: colors.muted, marginTop: spacing.sm }}>Nothing on your mind yet — good.</Txt>
+            <Txt style={{ color: colors.muted, marginTop: spacing.sm }}>
+              {filter ? "Nothing in this category yet." : "Nothing on your mind yet — good."}
+            </Txt>
           </Card>
         }
         renderItem={({ item }) => {
-          const cat = CATEGORIES.find((c) => c.key === item.category) || CATEGORIES[3];
+          const cat = CATEGORIES.find((c) => c.key === item.category) || CATEGORIES[CATEGORIES.length - 1];
           return (
             <Animated.View entering={FadeIn} exiting={FadeOutLeft}>
               <Pressable onPress={() => complete(item.id)}>
@@ -135,6 +159,24 @@ export default function BrainNotes() {
 
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  filterChipActive: { backgroundColor: colors.surface, borderColor: colors.borderStrong },
   noteRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   dot: { width: 8, height: 8, borderRadius: 4 },
   composer: { borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.sm },

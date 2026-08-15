@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, RefreshControl } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, RefreshControl, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -14,6 +14,7 @@ import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
 import { isNightTime } from "@/src/lib/night";
 import { HandoffCard } from "@/src/components/HandoffCard";
+import { ExactTimePicker } from "@/src/components/ExactTimePicker";
 
 const KINDS = [
   { key: "feed", labelKey: "track.logFeed", icon: "coffee", color: "#D68C7A" },
@@ -79,6 +80,9 @@ export default function Track() {
   const [diaperType, setDiaperType] = useState<"pee" | "poop" | "both">("pee");
   const [sleepMins, setSleepMins] = useState(45);
   const [whenMinsAgo, setWhenMinsAgo] = useState(0);
+  const [useExactTime, setUseExactTime] = useState(false);
+  const [pickedTime, setPickedTime] = useState(new Date());
+  const [customOz, setCustomOz] = useState("");
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -115,6 +119,9 @@ export default function Track() {
   const openKind = (kind: string) => {
     Haptics.selectionAsync();
     setWhenMinsAgo(0);
+    setUseExactTime(false);
+    setPickedTime(new Date());
+    setCustomOz("");
     setActiveKind(activeKind === kind ? null : kind);
   };
 
@@ -122,7 +129,10 @@ export default function Track() {
     if (!deviceId || !activeKind) return;
     setSaving(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const at = isoMinutesAgo(whenMinsAgo);
+    const effectiveMinsAgo = useExactTime
+      ? Math.max(0, Math.round((Date.now() - pickedTime.getTime()) / 60000))
+      : whenMinsAgo;
+    const at = isoMinutesAgo(effectiveMinsAgo);
     try {
       if (activeKind === "feed") {
         await api.babyLog({ device_id: deviceId, kind: "feed", amount_ml: feedMl, at });
@@ -132,7 +142,7 @@ export default function Track() {
         // Logged after the fact — "at" represents when the nap started.
         await api.babyLog({
           device_id: deviceId, kind: "sleep", duration_minutes: sleepMins,
-          at: isoMinutesAgo(whenMinsAgo + sleepMins),
+          at: isoMinutesAgo(effectiveMinsAgo + sleepMins),
         });
       }
       setJustLogged(activeKind);
@@ -254,14 +264,32 @@ export default function Track() {
                     {ML_OPTIONS.map((ml) => (
                       <Pressable
                         key={ml}
-                        onPress={() => { Haptics.selectionAsync(); setFeedMl(ml); }}
-                        style={[styles.chip, feedMl === ml && styles.chipActive]}
+                        onPress={() => { Haptics.selectionAsync(); setFeedMl(ml); setCustomOz(""); }}
+                        style={[styles.chip, !customOz && feedMl === ml && styles.chipActive]}
                       >
-                        <Txt style={{ color: feedMl === ml ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                        <Txt style={{ color: !customOz && feedMl === ml ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
                           {_ozLabel(ml)}
                         </Txt>
                       </Pressable>
                     ))}
+                  </View>
+                  <View style={styles.customOzRow}>
+                    <TextInput
+                      testID="custom-oz-input"
+                      value={customOz}
+                      onChangeText={(txt) => {
+                        setCustomOz(txt);
+                        const n = parseFloat(txt);
+                        if (Number.isFinite(n) && n > 0) setFeedMl(Math.round(n * 29.5735));
+                      }}
+                      placeholder="Or enter any amount in oz (e.g. 0.5, 3.5)"
+                      placeholderTextColor={colors.muted}
+                      keyboardType="decimal-pad"
+                      style={styles.customOzInput}
+                    />
+                    {customOz !== "" && (
+                      <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>= {feedMl}ml</Txt>
+                    )}
                   </View>
                 </>
               )}
@@ -309,15 +337,29 @@ export default function Track() {
                 {WHEN_OPTIONS.map((w) => (
                   <Pressable
                     key={w.label}
-                    onPress={() => { Haptics.selectionAsync(); setWhenMinsAgo(w.minsAgo); }}
-                    style={[styles.chip, whenMinsAgo === w.minsAgo && styles.chipActive]}
+                    onPress={() => { Haptics.selectionAsync(); setUseExactTime(false); setWhenMinsAgo(w.minsAgo); }}
+                    style={[styles.chip, !useExactTime && whenMinsAgo === w.minsAgo && styles.chipActive]}
                   >
-                    <Txt style={{ color: whenMinsAgo === w.minsAgo ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                    <Txt style={{ color: !useExactTime && whenMinsAgo === w.minsAgo ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
                       {w.label}
                     </Txt>
                   </Pressable>
                 ))}
+                <Pressable
+                  testID="pick-exact-time"
+                  onPress={() => { Haptics.selectionAsync(); setUseExactTime(true); }}
+                  style={[styles.chip, useExactTime && styles.chipActive]}
+                >
+                  <Txt style={{ color: useExactTime ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                    Pick exact time
+                  </Txt>
+                </Pressable>
               </View>
+              {useExactTime && (
+                <View style={{ marginTop: spacing.xs }}>
+                  <ExactTimePicker value={pickedTime} onChange={setPickedTime} />
+                </View>
+              )}
 
               <Button label={`Log ${activeKind}`} onPress={confirmLog} loading={saving} />
             </Card>
@@ -463,6 +505,17 @@ const styles = StyleSheet.create({
   totalNum: { fontSize: fontSize.xl },
   totalLabel: { color: colors.muted, fontSize: fontSize.sm, marginTop: 2 },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  customOzRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },
+  customOzInput: {
+    flex: 1,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   chip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
