@@ -50,7 +50,28 @@ function dayLabel(iso: string) {
 const CATEGORY_COLORS: Record<string, string> = {
   baby_date: "#E8A9BC",
   mom_date: "#D68C7A",
+  trail_walk: "#98A99B",
+  yoga: "#B08FC7",
   other: "#93B4D6",
+};
+
+const VENUE_TYPE_ICONS: Record<string, any> = {
+  park: "sun",
+  trail: "map",
+  winery: "droplet",
+  cafe: "coffee",
+  clubhouse: "home",
+  yoga_studio: "sunrise",
+  other: "map-pin",
+};
+const VENUE_TYPE_COLORS: Record<string, string> = {
+  park: "#98A99B",
+  trail: "#8FA876",
+  winery: "#A8556E",
+  cafe: "#D68C7A",
+  clubhouse: "#93B4D6",
+  yoga_studio: "#B08FC7",
+  other: "#B6AFA3",
 };
 
 export default function Meetups() {
@@ -236,10 +257,15 @@ export default function Meetups() {
                   <Pressable
                     key={v.name}
                     onPress={() => setVenueName(v.name)}
-                    style={[styles.venueRow, venueName === v.name && styles.venueRowActive]}
+                    style={[styles.venueRow, venueName === v.name && styles.venueRowActive, { flexDirection: "row", alignItems: "center", gap: spacing.sm }]}
                   >
-                    <Txt weight="500">{v.name}</Txt>
-                    <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{v.note}</Txt>
+                    <View style={[styles.venueIcon, { backgroundColor: (VENUE_TYPE_COLORS[v.type] || colors.brand) + "30" }]}>
+                      <Feather name={VENUE_TYPE_ICONS[v.type] || "map-pin"} size={16} color={VENUE_TYPE_COLORS[v.type] || colors.brand} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Txt weight="500">{v.name}</Txt>
+                      <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{v.note}</Txt>
+                    </View>
                   </Pressable>
                 ))}
                 <Pressable
@@ -382,4 +408,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   venueRowActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary + "30" },
+  venueIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

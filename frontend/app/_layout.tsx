@@ -93,6 +93,11 @@ export default function RootLayout() {
                 <Stack.Screen name="dad-corner" />
                 <Stack.Screen name="brain-notes" />
                 <Stack.Screen name="meetup/[id]" />
+                <Stack.Screen name="celebrations" />
+                <Stack.Screen
+                  name="yoga"
+                  options={{ presentation: "modal", animation: "slide_from_bottom" }}
+                />
               </Stack>
             </WebFrame>
           </LanguageProvider>

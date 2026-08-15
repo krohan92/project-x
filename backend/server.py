@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import json
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, BeforeValidator
@@ -1340,18 +1341,27 @@ def _detect_emotion_signal(name: Optional[str], mood_entry: Optional[dict]) -> O
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
-async def send_push(device_id: str, title: str, body: str):
+async def send_push(device_id: str, title: str, body: str, urgent: bool = False):
     token_doc = await db.push_tokens.find_one({"device_id": device_id})
     if not token_doc or not token_doc.get("expo_push_token"):
         return
     try:
+        payload = {
+            "to": token_doc["expo_push_token"],
+            "title": title,
+            "body": body,
+            "sound": "default",
+        }
+        if urgent:
+            # Android: high-priority + a dedicated channel so it can use a
+            # louder/longer alert if the phone's app-level channel settings
+            # allow it. iOS still just uses the default alert sound — a true
+            # ringing, full-screen call-style alert needs CallKit, which is
+            # native-only and out of scope here.
+            payload["priority"] = "high"
+            payload["channelId"] = "sos"
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(EXPO_PUSH_URL, json={
-                "to": token_doc["expo_push_token"],
-                "title": title,
-                "body": body,
-                "sound": "default",
-            })
+            await client.post(EXPO_PUSH_URL, json=payload)
     except Exception:
         logger.exception("push send failed")
 
@@ -1581,7 +1591,7 @@ async def handoff_sos(s: SOSRequest):
         body = f"{sender_name} needs you right now"
         if s.note:
             body += f": {s.note}"
-        await send_push(other_member["device_id"], "Cuddle · Need you now", body)
+        await send_push(other_member["device_id"], "Cuddle · Need you now", body, urgent=True)
 
     await db.sos_events.insert_one({
         "household_code": s.household_code, "device_id": s.device_id,
@@ -1868,6 +1878,7 @@ class MealCheckinCreate(BaseModel):
 MEETUP_NEIGHBORHOODS = [
     {"key": "riverstone", "label": "Riverstone", "city": "Madera"},
     {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera"},
+    {"key": "clovis", "label": "Clovis", "city": "Clovis"},
     {"key": "fresno", "label": "Fresno (general)", "city": "Fresno"},
 ]
 
@@ -1889,14 +1900,30 @@ MEETUP_VENUES = {
         {"name": "Rosie's Greenway", "type": "park", "note": "Tree-lined path, picnic tables, open lawn"},
         {"name": "Lyles Greenway", "type": "park", "note": "Rose garden, linear park"},
     ],
+    "clovis": [
+        {"name": "Old Town Clovis Trail", "type": "trail", "note": "Paved, stroller-friendly, runs past shops and dessert spots"},
+        {"name": "Clovis Botanical Garden", "type": "park", "note": "Native plants, shaded paths, quiet and easy pace"},
+        {"name": "Dry Creek Park", "type": "trail", "note": "Walking path that connects right to the Botanical Garden"},
+        {"name": "3 Oaks Vineyard & Winery", "type": "winery", "note": "Boutique winery right in Clovis, family-run, Saturday tastings"},
+        {"name": "Old Town Clovis", "type": "cafe", "note": "Shops, cafes, and ice cream spots for a mom-date afternoon"},
+        {"name": "Old Town Yoga", "type": "yoga_studio", "note": "Beginner, chair, and restorative classes — gentle enough for early postpartum"},
+    ],
     "fresno": [
-        {"name": "Pick your own spot", "type": "other", "note": "Fresno venue suggestions are still growing — name your favorite when you create a meetup"},
+        {"name": "Woodward Park (Lewis S. Eaton Trail)", "type": "trail", "note": "Flat, paved, scenic river views — a local favorite for strollers"},
+        {"name": "River Center — Hidden Homes Nature Trail", "type": "trail", "note": "Half-mile stroller-friendly trail with picnic tables and restrooms onsite"},
+        {"name": "Fresno Chaffee Zoo", "type": "other", "note": "Great for a baby-date outing with older siblings too"},
+        {"name": "Moravia Wines", "type": "winery", "note": "Frequently hosts family-friendly events"},
+        {"name": "Solitary Cellars", "type": "winery", "note": "In Friant — foothill views while you sip"},
+        {"name": "Blue Moon Yoga & Wellness (N Fresno)", "type": "yoga_studio", "note": "Offers non-heated classes explicitly good for postpartum and nursing moms"},
+        {"name": "Pick your own spot", "type": "other", "note": "Name your favorite when you create a meetup"},
     ],
 }
 
 MEETUP_CATEGORIES = [
     {"key": "baby_date", "label": "Baby Date", "icon": "smile"},
     {"key": "mom_date", "label": "Mom Date", "icon": "coffee"},
+    {"key": "trail_walk", "label": "Trail Walk", "icon": "map"},
+    {"key": "yoga", "label": "Postpartum Yoga", "icon": "sunrise"},
     {"key": "other", "label": "Other Get-together", "icon": "users"},
 ]
 
@@ -1912,6 +1939,7 @@ class MeetupCreate(BaseModel):
     duration_minutes: int = 90
     description: Optional[str] = None
     cultural_tag: Optional[str] = None   # optional link to a CULTURAL_SPACES key
+    is_recurring: bool = False           # marks it as an ongoing weekly group, not a one-off
 
 
 class MeetupRSVP(BaseModel):
@@ -1923,6 +1951,58 @@ class MeetupReflection(BaseModel):
     device_id: str
     mood_after: int          # 1-5
     note: Optional[str] = None
+
+
+# ----- Celebrations: real local vendors, not invented placeholders -----
+CELEBRATION_VENDORS = {
+    "venue": [
+        {"name": "Aroza Event Center", "note": "Indoor event hall on the Fresno-Clovis border, up to 250 guests", "website": "https://arozausa.com"},
+        {"name": "K1 Speed Clovis", "note": "Indoor go-kart racing with all-in-one kids' birthday packages", "website": "https://www.k1speed.com/clovis-location"},
+        {"name": "Sky Zone Clovis", "note": "Trampoline park with a dedicated party zone", "website": "https://www.skyzone.com"},
+        {"name": "The Jungle Party House", "note": "Indoor jungle gym, bounce house, karaoke — Fresno", "website": "https://www.yelp.com/biz/the-jungle-party-house-fresno"},
+    ],
+    "cake": [
+        {"name": "Nothing Bundt Cakes", "note": "Clovis & Fresno locations, pre-order up to 30 days ahead", "website": "https://www.nothingbundtcakes.com"},
+        {"name": "Cake Me Away", "note": "Custom cakes & cupcakes in Clovis, contact by phone, text, or Facebook", "website": "https://www.cakemeaway.us"},
+        {"name": "Spirit Made Cakes", "note": "Fresno's \"pink bakery\" — custom cakes for birthdays and baby showers", "website": "https://spiritmadecakes.com"},
+    ],
+    "photography": [
+        {"name": "One Good Shot Photography", "note": "Baby's first birthday cake-smash sessions, serving Fresno & Clovis", "website": "https://onegoodshotphotography.com/contact/"},
+    ],
+}
+
+
+@api_router.get("/celebrations/vendors")
+async def celebration_vendors(category: Optional[str] = None):
+    if category:
+        return CELEBRATION_VENDORS.get(category, [])
+    return CELEBRATION_VENDORS
+
+
+# ----- Personal Events: appointments + celebrations, manual or photo-scanned -----
+EVENT_CATEGORIES = [
+    {"key": "appointment", "label": "Appointment", "icon": "clipboard"},
+    {"key": "birthday", "label": "Birthday Party", "icon": "gift"},
+    {"key": "baby_shower", "label": "Baby Shower", "icon": "heart"},
+    {"key": "other", "label": "Other", "icon": "calendar"},
+]
+
+
+class EventExtractRequest(BaseModel):
+    image_base64: str
+    media_type: str = "image/jpeg"
+
+
+class PersonalEventCreate(BaseModel):
+    device_id: str
+    title: str
+    category: str
+    date: str                 # ISO date
+    time_label: Optional[str] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    reminder_hours_before: int = 24
+    source: str = "manual"    # "manual" or "photo"
 
 
 def _meal_train_code() -> str:
@@ -2288,6 +2368,143 @@ async def weekly_insights(device_id: str, force: bool = False):
         {"device_id": device_id, "week_of": week_of}, {"$set": doc}, upsert=True,
     )
     return doc
+
+
+# ----- Personal Events endpoints -----
+@api_router.get("/events/categories")
+async def event_categories():
+    return EVENT_CATEGORIES
+
+
+@api_router.post("/events/extract")
+async def extract_event_from_photo(req: EventExtractRequest):
+    """Reads a photographed invite, appointment card, or flyer and pulls out
+    the event details. Returns a DRAFT for her to review and edit — never
+    auto-saves, since OCR/AI reads can be wrong and this shouldn't silently
+    create something on her calendar without her seeing it first."""
+    if not anthropic_client:
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    prompt = (
+        f"Today's date is {today}. This image is a photographed invite, appointment card, or flyer. "
+        "Extract the event details and respond with ONLY a JSON object (no markdown, no other text) "
+        "with these exact keys: "
+        '{"title": string, "category": one of "appointment"|"birthday"|"baby_shower"|"other", '
+        '"date": "YYYY-MM-DD" (infer the year if not shown, using today\'s date as reference — never a past date), '
+        '"time_label": string like "2:30 PM" or null if not shown, '
+        '"location": string or null, "notes": string or null (any other relevant detail like a phone number or reason for visit)}. '
+        "If you genuinely cannot read a field, use null for it. Never fabricate a date — if no date is visible, set date to null."
+    )
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=400,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": req.media_type, "data": req.image_base64}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+        return parsed
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Couldn't read that clearly — try a clearer photo or enter it manually")
+    except Exception as e:
+        logger.exception("event extraction failed")
+        raise HTTPException(status_code=502, detail=f"Extraction failed: {e}")
+
+
+@api_router.post("/events")
+async def create_event(e: PersonalEventCreate):
+    event_id = uuid.uuid4().hex[:10]
+    doc = e.model_dump()
+    doc["event_id"] = event_id
+    doc["created_at"] = now_iso()
+    doc["reminded"] = False
+    await db.personal_events.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/events/{device_id}")
+async def list_events(device_id: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    docs = await db.personal_events.find(
+        {"device_id": device_id, "date": {"$gte": today}}, {"_id": 0}
+    ).sort("date", 1).to_list(200)
+    return docs
+
+
+@api_router.delete("/events/{event_id}")
+async def delete_event(event_id: str):
+    await db.personal_events.delete_one({"event_id": event_id})
+    return {"ok": True}
+
+
+@api_router.get("/events/{event_id}/calendar.ics")
+async def event_ics(event_id: str):
+    ev = await db.personal_events.find_one({"event_id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        start_dt = datetime.strptime(f"{ev['date']} {ev['time_label']}", "%Y-%m-%d %I:%M %p")
+        all_day = False
+    except (ValueError, TypeError):
+        start_dt = datetime.strptime(ev["date"], "%Y-%m-%d")
+        all_day = True
+    end_dt = start_dt if all_day else start_dt + timedelta(hours=1)
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Cuddle//Event//EN", "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT", f"UID:{event_id}@cuddleapp", f"DTSTAMP:{dtstamp}",
+    ]
+    if all_day:
+        lines += [f"DTSTART;VALUE=DATE:{start_dt.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{end_dt.strftime('%Y%m%d')}"]
+    else:
+        lines += [f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}", f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}"]
+    lines += [
+        f"SUMMARY:{_ics_escape(ev['title'])}",
+        f"LOCATION:{_ics_escape(ev.get('location') or '')}",
+        f"DESCRIPTION:{_ics_escape(ev.get('notes') or '')}",
+        "END:VEVENT", "END:VCALENDAR", "",
+    ]
+    return StreamingResponse(
+        iter(["\r\n".join(lines)]),
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="event-{event_id}.ics"'},
+    )
+
+
+@api_router.get("/events/{device_id}/check-reminders")
+async def check_event_reminders(device_id: str):
+    """Polled from the Home screen — fires a push once per event when it
+    enters its reminder window, same lightweight pattern as the Tag Team
+    nudges (no dedicated task scheduler in this deployment)."""
+    now = datetime.now(timezone.utc)
+    upcoming = await db.personal_events.find(
+        {"device_id": device_id, "reminded": False, "date": {"$gte": now.date().isoformat()}}
+    ).to_list(100)
+    fired = []
+    for ev in upcoming:
+        try:
+            when = datetime.strptime(f"{ev['date']} {ev.get('time_label') or '9:00 AM'}", "%Y-%m-%d %I:%M %p")
+        except ValueError:
+            when = datetime.strptime(ev["date"], "%Y-%m-%d")
+        hours_until = (when - now).total_seconds() / 3600
+        if 0 <= hours_until <= ev.get("reminder_hours_before", 24):
+            await send_push(
+                device_id, "Cuddle · Coming up",
+                f"{ev['title']}" + (f" — {ev['time_label']}" if ev.get("time_label") else ""),
+            )
+            await db.personal_events.update_one({"event_id": ev["event_id"]}, {"$set": {"reminded": True}})
+            fired.append(ev["event_id"])
+    return {"fired": fired}
 
 
 app.include_router(api_router)

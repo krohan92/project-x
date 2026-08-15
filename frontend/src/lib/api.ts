@@ -234,4 +234,18 @@ export const api = {
     req(`/handoff/sos`, { method: "POST", body: JSON.stringify(body) }),
   weeklyInsights: (deviceId: string, force = false) =>
     req(`/insights/weekly/${deviceId}${force ? "?force=true" : ""}`),
+
+  // ----- Celebrations -----
+  celebrationVendors: (category?: string) =>
+    req(`/celebrations/vendors${category ? `?category=${category}` : ""}`),
+
+  // ----- Personal Events (appointments + celebrations) -----
+  eventCategories: () => req(`/events/categories`),
+  extractEventFromPhoto: (imageBase64: string, mediaType = "image/jpeg") =>
+    req(`/events/extract`, { method: "POST", body: JSON.stringify({ image_base64: imageBase64, media_type: mediaType }) }),
+  createEvent: (body: any) => req(`/events`, { method: "POST", body: JSON.stringify(body) }),
+  listEvents: (deviceId: string) => req(`/events/${deviceId}`),
+  deleteEvent: (eventId: string) => req(`/events/${eventId}`, { method: "DELETE" }),
+  eventIcsUrl: (eventId: string) => `${API}/events/${eventId}/calendar.ics`,
+  checkEventReminders: (deviceId: string) => req(`/events/${deviceId}/check-reminders`),
 };

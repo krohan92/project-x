@@ -1,10 +1,29 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { Platform } from "react-native";
-import { colors, fonts } from "@/src/theme/theme";
+import { Platform, View, StyleSheet } from "react-native";
+import { BlurView } from "expo-blur";
+import { colors, fonts, radius } from "@/src/theme/theme";
 import { useT } from "@/src/lib/i18n";
 import { useAmbient } from "@/src/lib/ambient-context";
+
+function GlassTabBackground() {
+  return (
+    <BlurView
+      intensity={70}
+      tint="light"
+      style={StyleSheet.absoluteFill}
+    />
+  );
+}
+
+function TabIcon({ name, color, focused }: { name: any; color: string; focused: boolean }) {
+  return (
+    <View style={[styles.iconWrap, focused && { backgroundColor: colors.brand + "20" }]}>
+      <Feather name={name} size={focused ? 22 : 20} color={color} />
+    </View>
+  );
+}
 
 export default function TabLayout() {
   const { t } = useT();
@@ -15,14 +34,15 @@ export default function TabLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
+        tabBarBackground: GlassTabBackground,
         tabBarStyle: {
-          backgroundColor: ambientTint,
+          backgroundColor: ambientTint + "B0",
           borderTopColor: colors.border,
-          borderTopWidth: 1,
-          height: Platform.OS === "ios" ? 88 : 64,
-          paddingTop: 8,
+          borderTopWidth: 0.5,
+          height: Platform.OS === "ios" ? 90 : 68,
+          paddingTop: 10,
         },
-        tabBarLabelStyle: { fontFamily: fonts.text, fontSize: 11 },
+        tabBarLabelStyle: { fontFamily: fonts.text, fontSize: 11, marginTop: 2 },
       }}
       screenListeners={{ tabPress: () => Haptics.selectionAsync() }}
     >
@@ -30,42 +50,42 @@ export default function TabLayout() {
         name="index"
         options={{
           title: t("tab.today"),
-          tabBarIcon: ({ color, size }) => <Feather name="sun" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="sun" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="beacon"
         options={{
           title: t("tab.beacon"),
-          tabBarIcon: ({ color, size }) => <Feather name="radio" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="radio" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="track"
         options={{
           title: t("tab.track"),
-          tabBarIcon: ({ color, size }) => <Feather name="activity" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="activity" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="community"
         options={{
           title: t("tab.circle"),
-          tabBarIcon: ({ color, size }) => <Feather name="users" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="users" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="meetups"
         options={{
           title: "Meetups",
-          tabBarIcon: ({ color, size }) => <Feather name="calendar" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="calendar" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="care"
         options={{
           title: t("tab.care"),
-          tabBarIcon: ({ color, size }) => <Feather name="heart" size={size} color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="heart" color={color} focused={focused} />,
         }}
       />
       {/* Kept accessible via navigation, hidden from the tab bar */}
@@ -74,3 +94,13 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  iconWrap: {
+    width: 40,
+    height: 32,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});

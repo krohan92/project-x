@@ -91,6 +91,34 @@ export default function Care() {
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Card>
         </Pressable>
+        <Pressable testID="care-yoga" onPress={() => router.push("/yoga")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#B08FC7" + "40" }]}>
+              <Feather name="sunrise" size={20} color="#7B5C96" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Postpartum Yoga</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Gentle guided routines, a few minutes at a time
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
+        <Pressable testID="care-celebrations" onPress={() => router.push("/celebrations")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#D68C7A" + "40" }]}>
+              <Feather name="gift" size={20} color="#B5624E" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Celebrations & Events</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Birthdays, showers, appointments — scan a flyer or add manually
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
         <Pressable testID="care-give-share" onPress={() => router.push("/shop")}>
           <Card style={styles.rowCard}>
             <View style={[styles.iconBubble, { backgroundColor: colors.brandSecondary + "40" }]}>

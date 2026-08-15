@@ -81,10 +81,10 @@ const LEVEL_LABEL: Record<string, string> = {
   urgent: "Please check in",
 };
 
-const ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "mom", label: "Mom" },
-  { value: "dad", label: "Dad" },
-  { value: "caregiver", label: "Caregiver" },
+const ROLE_OPTIONS: { value: string; label: string; icon: any }[] = [
+  { value: "mom", label: "Mom", icon: "heart" },
+  { value: "dad", label: "Dad", icon: "shield" },
+  { value: "caregiver", label: "Caregiver", icon: "users" },
 ];
 
 // Soft pastel accent by role — kept subtle on purpose so the app stays calm,
@@ -119,7 +119,6 @@ export function HandoffCard() {
   const [editingRole, setEditingRole] = useState(false);
   const [roleDraft, setRoleDraft] = useState("mom");
   const [savingRole, setSavingRole] = useState(false);
-  const [sosConfirm, setSosConfirm] = useState(false);
   const [sosSending, setSosSending] = useState(false);
   const [sosSent, setSosSent] = useState(false);
 
@@ -205,7 +204,6 @@ export function HandoffCard() {
       setSosSent(true);
       setTimeout(() => setSosSent(false), 4000);
     } catch {}
-    setSosConfirm(false);
     setSosSending(false);
   };
 
@@ -452,23 +450,11 @@ export function HandoffCard() {
                 <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textAlign: "center" }}>
                   You're on duty. {score?.suggested_next?.name || "Your partner"} can tag in from their phone.
                 </Txt>
-                {sosSent ? (
-                  <Txt style={{ color: colors.success, fontSize: fontSize.sm, textAlign: "center" }}>
-                    Sent — they've been notified.
-                  </Txt>
-                ) : sosConfirm ? (
-                  <Animated.View entering={FadeIn} style={{ flexDirection: "row", gap: spacing.sm }}>
-                    <Button label="Yes, notify them now" onPress={sendSOS} loading={sosSending} style={{ flex: 1 }} />
-                    <Button label="Cancel" variant="secondary" onPress={() => setSosConfirm(false)} style={{ flex: 1 }} />
-                  </Animated.View>
-                ) : (
-                  <Pressable onPress={() => setSosConfirm(true)} style={styles.sosBtn}>
-                    <Feather name="zap" size={16} color={colors.error} />
-                    <Txt style={{ color: colors.error, fontSize: fontSize.sm }} weight="500">
-                      Need help now — notify them
-                    </Txt>
-                  </Pressable>
-                )}
+                <SOSSection
+                  onNotify={sendSOS}
+                  sosSending={sosSending}
+                  sosSent={sosSent}
+                />
               </>
             )}
             {Platform.OS === "web" && (
@@ -483,6 +469,51 @@ export function HandoffCard() {
   );
 }
 
+function SOSSection({
+  onNotify,
+  sosSending,
+  sosSent,
+}: {
+  onNotify: () => void;
+  sosSending: boolean;
+  sosSent: boolean;
+}) {
+  const [confirm, setConfirm] = useState(false);
+
+  if (sosSent) {
+    return (
+      <Animated.View entering={FadeIn} style={styles.sosSentBox}>
+        <Feather name="check-circle" size={18} color={colors.success} />
+        <Txt style={{ color: colors.success, fontSize: fontSize.sm }} weight="500">
+          Sent — they've been notified.
+        </Txt>
+      </Animated.View>
+    );
+  }
+
+  return (
+    <View style={{ alignItems: "center", gap: spacing.sm }}>
+      {!confirm ? (
+        <Pressable
+          testID="sos-button"
+          onPress={() => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); setConfirm(true); }}
+          style={styles.sosCircle}
+        >
+          <Txt style={{ color: "#fff", fontSize: fontSize.lg }} weight="500">SOS</Txt>
+        </Pressable>
+      ) : (
+        <Animated.View entering={FadeIn} style={{ width: "100%", gap: spacing.sm }}>
+          <Txt style={{ textAlign: "center", color: colors.onSurface }}>
+            This notifies your partner right now. Are you sure?
+          </Txt>
+          <Button label="Yes, notify them now" onPress={onNotify} loading={sosSending} />
+          <Button label="Cancel" variant="secondary" onPress={() => setConfirm(false)} />
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
 function RolePicker({ selected, onSelect }: { selected: string; onSelect: (v: string) => void }) {
   return (
     <View style={{ flexDirection: "row", gap: spacing.sm }}>
@@ -490,22 +521,26 @@ function RolePicker({ selected, onSelect }: { selected: string; onSelect: (v: st
         const active = selected === opt.value;
         const accent = roleAccent(opt.value);
         return (
-          <Pressable
-            key={opt.value}
-            onPress={() => onSelect(opt.value)}
-            style={[
-              styles.roleChip,
-              {
-                backgroundColor: active ? accent.tint : colors.surface,
-                borderColor: active ? accent.fg : colors.borderStrong,
-              },
-            ]}
-          >
-            <View style={[styles.roleDot, { backgroundColor: accent.fg }]} />
-            <Txt style={{ fontSize: fontSize.sm, color: active ? colors.onSurface : colors.muted }} weight={active ? "500" : "400"}>
-              {opt.label}
-            </Txt>
-          </Pressable>
+          <View key={opt.value} style={{ flex: 1 }}>
+            <Pressable
+              onPress={() => onSelect(opt.value)}
+              style={[
+                styles.roleChip,
+                {
+                  backgroundColor: active ? accent.tint : colors.surface,
+                  borderColor: active ? accent.fg : colors.borderStrong,
+                  borderWidth: active ? 2 : 1,
+                },
+              ]}
+            >
+              <View style={[styles.roleIconBadge, { backgroundColor: accent.fg }]}>
+                <Feather name={opt.icon} size={15} color="#fff" />
+              </View>
+              <Txt style={{ fontSize: fontSize.sm, color: active ? colors.onSurface : colors.muted, marginTop: 4 }} weight={active ? "500" : "400"}>
+                {opt.label}
+              </Txt>
+            </Pressable>
+          </View>
         );
       })}
     </View>
@@ -537,16 +572,28 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: radius.pill,
   },
-  sosBtn: {
+  sosCircle: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    backgroundColor: colors.error,
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: spacing.sm,
+    shadowColor: colors.error,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  sosSentBox: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.xs,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.error + "50",
-    backgroundColor: colors.error + "12",
+    backgroundColor: colors.success + "15",
   },
   codeBox: {
     backgroundColor: colors.surface,
@@ -577,13 +624,17 @@ const styles = StyleSheet.create({
   },
   roleChip: {
     flex: 1,
-    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.xs,
-    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+  },
+  roleIconBadge: {
+    width: 32,
+    height: 32,
     borderRadius: radius.pill,
-    paddingVertical: spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
   },
   roleDot: { width: 8, height: 8, borderRadius: 4 },
   breakdownBox: {

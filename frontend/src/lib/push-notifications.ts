@@ -26,6 +26,19 @@ export async function registerForPushNotifications(deviceId: string): Promise<bo
     }
     if (finalStatus !== "granted") return false;
 
+    // Android needs an explicit high-importance channel for the SOS push to
+    // actually alert loudly — without this, "priority: high" from the
+    // server is capped by the default channel's quieter settings.
+    if (Platform.OS === "android") {
+      await Notifications.setNotificationChannelAsync("sos", {
+        name: "Cuddle SOS",
+        importance: Notifications.AndroidImportance.MAX,
+        sound: "default",
+        vibrationPattern: [0, 400, 200, 400, 200, 400],
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    }
+
     const tokenResponse = await Notifications.getExpoPushTokenAsync();
     const token = tokenResponse?.data;
     if (!token) return false;
