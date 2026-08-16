@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: radius.lg,
   },
   typing: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  chipsRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm },
+  chipsRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: "flex-start" },
   promptChip: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,

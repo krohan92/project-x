@@ -134,7 +134,7 @@ export default function Celebrations() {
           One tap to reach out — nothing is contacted automatically on your behalf.
         </Txt>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, alignItems: "flex-start" }}>
           {VENDOR_TABS.map((t) => (
             <Pressable
               key={t.key}

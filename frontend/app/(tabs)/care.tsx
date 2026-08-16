@@ -119,6 +119,20 @@ export default function Care() {
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Card>
         </Pressable>
+        <Pressable testID="care-full-agenda" onPress={() => router.push("/cuddle-calendar")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#93B4D6" + "40" }]}>
+              <Feather name="calendar" size={20} color="#4C6E8F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Full Agenda</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Mama's Calendar and Meetups, together in one timeline
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
         <Pressable testID="care-give-share" onPress={() => router.push("/shop")}>
           <Card style={styles.rowCard}>
             <View style={[styles.iconBubble, { backgroundColor: colors.brandSecondary + "40" }]}>

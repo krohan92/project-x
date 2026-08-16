@@ -260,7 +260,7 @@ async def seed_community():
 # ---------------------------------------------------------------------------
 # Companion system prompt
 # ---------------------------------------------------------------------------
-def build_system_prompt(profile: Optional[dict]) -> str:
+def build_system_prompt(profile: Optional[dict], pattern_summary: str = "") -> str:
     ctx = ""
     if profile:
         parts = []
@@ -276,11 +276,22 @@ def build_system_prompt(profile: Optional[dict]) -> str:
             parts.append(f"she is {profile['feeding_method']}")
         if parts:
             ctx = "Context about her: " + ", ".join(parts) + "."
+    pattern_ctx = ""
+    if pattern_summary:
+        pattern_ctx = (
+            f"\n\nRecent pattern (from her own logged data, use only if it's genuinely relevant to what "
+            f"she brings up — never lead with it or bring it up unprompted): {pattern_summary} "
+            "This is a reflection of what she's told the app herself, not a diagnosis or a clinical "
+            "assessment — never call it 'anxiety,' 'depression,' or any clinical term, and never tell her "
+            "what she is feeling. If she asks something like 'what should I do,' you can let this pattern "
+            "quietly inform a grounded, specific suggestion rather than a generic one — but always in your "
+            "own words, warmly, as a friend who's been paying attention, not as a system reciting her data."
+        )
     return (
         "You are Cuddle, a warm, deeply empathetic companion for mothers in the postpartum period. "
         "You are NOT a doctor and you never diagnose, prescribe, or give clinical medical instructions. "
         "You are a supportive, non-judgmental listener — like a wise, gentle friend who has been through it. "
-        f"{ctx}\n\n"
+        f"{ctx}{pattern_ctx}\n\n"
         "IMPORTANT — how to use the context above: those are background facts for you to be aware of, "
         "not a checklist or an opening topic. Never lead with them, and never ask about them out of the "
         "blue (e.g. don't open by asking about her surgery, her delivery, or her feeding method just "
@@ -534,10 +545,36 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
     return "Unknown action."
 
 
+async def _recent_pattern_summary(device_id: str) -> str:
+    """A short, factual summary of her last few days — for grounding
+    'what should I do' type answers in what she's actually logged, not
+    guessing. This reflects her own self-reported data back to her; it
+    never labels or diagnoses a mental state."""
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    moods = await db.moods.find(
+        {"device_id": device_id, "created_at": {"$gte": week_ago}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(20)
+    if not moods:
+        return ""
+    scores = [m["mood"] for m in moods if m.get("mood") is not None]
+    if not scores:
+        return ""
+    recent_avg = sum(scores[-3:]) / len(scores[-3:])
+    trend = ""
+    if len(scores) >= 5:
+        earlier_avg = sum(scores[:-3]) / max(1, len(scores[:-3]))
+        if recent_avg < earlier_avg - 0.7:
+            trend = ", trending lower than earlier this week"
+        elif recent_avg > earlier_avg + 0.7:
+            trend = ", trending better than earlier this week"
+    return f"Her self-reported mood over the last few check-ins has averaged about {recent_avg:.1f}/5{trend}."
+
+
 @api_router.post("/chat")
 async def chat(req: ChatRequest):
     profile = await db.profiles.find_one({"device_id": req.device_id}, {"_id": 0})
-    system_prompt = build_system_prompt(profile)
+    pattern_summary = await _recent_pattern_summary(req.device_id)
+    system_prompt = build_system_prompt(profile, pattern_summary)
 
     # store user message
     await db.chat_messages.insert_one({
@@ -1211,12 +1248,39 @@ async def baby_log_summary(device_id: str):
     }
 
 
-def _predict_next(logs: List[dict], min_samples: int = 2, max_samples: int = 6) -> Optional[dict]:
+def _age_based_feed_interval_minutes(age_weeks: Optional[float]) -> Optional[int]:
+    """Widely-used general newborn/infant feeding interval norms — used only
+    as a starting estimate when there isn't enough of this baby's own
+    logged history yet, and always labeled as such rather than presented
+    as if it came from her own data."""
+    if age_weeks is None:
+        return None
+    if age_weeks < 4:
+        return 150   # ~2.5h, typical newborn
+    if age_weeks < 13:
+        return 195   # ~3.25h, 1-3 months
+    if age_weeks < 26:
+        return 240   # ~4h, 3-6 months
+    return 270       # ~4.5h, 6+ months
+
+
+def _predict_next(logs: List[dict], min_samples: int = 2, max_samples: int = 6, age_fallback_minutes: Optional[int] = None) -> Optional[dict]:
     """Simple moving-average interval prediction from the caregiver's own
     recently logged pattern — not a clinical model, just 'based on the last
     few times, here's roughly when this tends to happen again.' Confidence
-    is stated honestly rather than implying more precision than we have."""
+    is stated honestly rather than implying more precision than we have.
+    Falls back to a general age-based estimate (clearly labeled) only when
+    there isn't enough of this baby's own history yet."""
     if len(logs) < min_samples:
+        if age_fallback_minutes and logs:
+            last_time = sorted([datetime.fromisoformat(l["at"]) for l in logs])[-1]
+            predicted = last_time + timedelta(minutes=age_fallback_minutes)
+            return {
+                "predicted_at": predicted.isoformat(),
+                "avg_interval_minutes": age_fallback_minutes,
+                "confidence": "age_estimate",
+                "sample_size": len(logs),
+            }
         return None
     times = sorted([datetime.fromisoformat(l["at"]) for l in logs])[-max_samples - 1:]
     intervals = [(times[i + 1] - times[i]).total_seconds() / 60 for i in range(len(times) - 1)]
@@ -1250,8 +1314,21 @@ async def baby_log_predictions(device_id: str):
     pee_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("pee", "both")]
     poop_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("poop", "both")]
 
+    age_weeks = None
+    prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    if prof:
+        due_or_birth = prof.get("delivery_date") or prof.get("due_date")
+        if due_or_birth:
+            try:
+                born = datetime.fromisoformat(due_or_birth).date()
+                age_weeks = (datetime.now(timezone.utc).date() - born).days / 7
+            except ValueError:
+                pass
+        if age_weeks is None and prof.get("baby_age_weeks") is not None:
+            age_weeks = prof["baby_age_weeks"]
+
     return {
-        "feed": _predict_next(feed_logs),
+        "feed": _predict_next(feed_logs, age_fallback_minutes=_age_based_feed_interval_minutes(age_weeks)),
         "pee": _predict_next(pee_logs, min_samples=3),
         "poop": _predict_next(poop_logs, min_samples=2, max_samples=4),
     }
@@ -2614,6 +2691,39 @@ async def wellbeing_self_check(device_id: str):
         {"device_id": device_id}, {"$set": {"last_nudge_date": today}}, upsert=True,
     )
     return {"nudged": True}
+
+
+# ----- Predictive nudge: turns the feed prediction into an actual heads-up
+# push instead of something she only sees if she happens to open Track. -----
+@api_router.get("/baby-log/{device_id}/predictive-nudge")
+async def predictive_feed_nudge(device_id: str):
+    now = datetime.now(timezone.utc)
+
+    predictions = await baby_log_predictions(device_id)
+    feed_pred = predictions.get("feed")
+    if not feed_pred or feed_pred["confidence"] not in ("developing", "steady", "age_estimate"):
+        return {"nudged": False}  # not confident enough yet to be worth interrupting her
+
+    predicted_at = feed_pred["predicted_at"]
+    tracker = await db.predictive_nudge_tracker.find_one({"device_id": device_id})
+    if tracker and tracker.get("last_nudged_prediction") == predicted_at:
+        return {"nudged": False}  # already nudged for this specific predicted feed
+
+    predicted_dt = datetime.fromisoformat(predicted_at)
+    minutes_until = (predicted_dt - now).total_seconds() / 60
+    # Fire once per predicted feed, in the 5-15 minute window before it —
+    # early enough to get set up, not so early it's just noise.
+    if 5 <= minutes_until <= 15:
+        basis = "usual pattern" if feed_pred["confidence"] != "age_estimate" else "typical timing for this age"
+        await send_push(
+            device_id, "Cuddle · Heads up",
+            f"Next feed is probably coming up soon, based on {basis} — just a heads up.",
+        )
+        await db.predictive_nudge_tracker.update_one(
+            {"device_id": device_id}, {"$set": {"last_nudged_prediction": predicted_at}}, upsert=True,
+        )
+        return {"nudged": True}
+    return {"nudged": False}
 
 
 app.include_router(api_router)

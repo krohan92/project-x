@@ -382,7 +382,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   title: { fontSize: fontSize.xl },
-  chipsRow: { gap: spacing.sm, paddingRight: spacing.lg },
+  chipsRow: { gap: spacing.sm, paddingRight: spacing.lg, alignItems: "flex-start" },
   chip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,

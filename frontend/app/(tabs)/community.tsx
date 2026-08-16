@@ -136,7 +136,7 @@ export default function Community() {
         <View style={styles.headerRow}>
           <View>
             <Txt display style={styles.title}>{t("tab.circle")}</Txt>
-            <Txt style={{ color: colors.muted }}>Moms in it together</Txt>
+            <Txt style={{ color: colors.muted }}>Stories & posts from other moms, anytime</Txt>
           </View>
           <Pressable testID="manage-spaces-button" onPress={() => setManageOpen(true)} style={styles.spacesBtn}>
             <Feather name="globe" size={14} color={colors.onBrandSecondary} />
@@ -149,7 +149,7 @@ export default function Community() {
             <Txt weight="500" style={{ marginBottom: spacing.sm, fontSize: fontSize.sm, color: colors.muted }}>
               CULTURAL CIRCLES
             </Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, alignItems: "flex-start" }}>
               {allSpaces.map((s) => {
                 const isJoined = joined.includes(s.key);
                 return (
@@ -263,7 +263,7 @@ export default function Community() {
               testID="post-input"
               value={newText}
               onChangeText={setNewText}
-              placeholder="What's on your heart, mama? This is a kind space."
+              placeholder={`What's on your heart${profile?.name ? `, ${profile.name}` : ""}? This is a kind space.`}
               placeholderTextColor={colors.muted}
               multiline
               style={styles.composeInput}
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
     minWidth: 120,
   },
   circleCardActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary + "30" },
-  chipsRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm },
+  chipsRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, gap: spacing.sm, alignItems: "flex-start" },
   chip: {
     height: 36,
     paddingHorizontal: spacing.lg,

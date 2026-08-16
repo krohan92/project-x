@@ -106,6 +106,7 @@ export default function Track() {
         setBalanceMessage(null);
       }
     } catch {}
+    api.predictiveFeedNudge(deviceId).catch(() => {});
   }, [deviceId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));

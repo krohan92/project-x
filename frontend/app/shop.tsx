@@ -349,7 +349,7 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   title: { fontSize: fontSize.xl },
-  chipsRow: { gap: spacing.sm, paddingRight: spacing.lg },
+  chipsRow: { gap: spacing.sm, paddingRight: spacing.lg, alignItems: "flex-start" },
   chip: {
     flexDirection: "row",
     alignItems: "center",
