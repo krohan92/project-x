@@ -56,9 +56,9 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="beacon"
+          name="nearby"
           options={{
-            title: t("tab.beacon"),
+            title: "Nearby",
             tabBarIcon: ({ color, focused }) => <TabIcon name="radio" color={color} focused={focused} />,
           }}
         />

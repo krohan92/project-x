@@ -692,7 +692,7 @@ async def add_comment(post_id: str, c: CommentCreate):
 
 
 # ===========================================================================
-# BEACON — presence, matching, peer chat, baby tracker, spaces, guides, i18n
+# NEARBY — presence, matching, peer chat, baby tracker, spaces, guides, i18n
 # ===========================================================================
 
 ETHNICITY_TAGS = [
@@ -757,7 +757,7 @@ GUIDES = [
 ]
 
 
-class BeaconSettings(BaseModel):
+class NearbySettings(BaseModel):
     device_id: str
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -1021,14 +1021,14 @@ def jitter_coords(lat: float, lng: float, max_miles: float = 15.0):
     return round(glat, 4), round(glng, 4)
 
 
-# ----- Beacon settings / profile extension -----
-@api_router.get("/beacon/meta")
-async def beacon_meta():
+# ----- Nearby settings / profile extension -----
+@api_router.get("/nearby/meta")
+async def nearby_meta():
     return {"ethnicity_tags": ETHNICITY_TAGS, "cultural_spaces": CULTURAL_SPACES}
 
 
-@api_router.patch("/beacon/settings")
-async def update_beacon_settings(s: BeaconSettings):
+@api_router.patch("/nearby/settings")
+async def update_nearby_settings(s: NearbySettings):
     update = {k: v for k, v in s.model_dump().items() if k != "device_id" and v is not None}
     if update:
         await db.profiles.update_one({"device_id": s.device_id}, {"$set": update}, upsert=True)
@@ -1036,7 +1036,7 @@ async def update_beacon_settings(s: BeaconSettings):
     return doc or {}
 
 
-@api_router.delete("/beacon/ethnicity/{device_id}")
+@api_router.delete("/nearby/ethnicity/{device_id}")
 async def delete_ethnicity(device_id: str):
     # Fully remove the optional cultural data and disable cultural matching.
     await db.profiles.update_one(

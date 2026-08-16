@@ -14,7 +14,7 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   "tab.today": "Today",
-  "tab.beacon": "Beacon",
+  "tab.nearby": "Nearby",
   "tab.track": "Track",
   "tab.circle": "Circle",
   "tab.care": "Care",
@@ -29,20 +29,20 @@ const en: Dict = {
   "common.done": "Done",
   "common.optional": "Optional",
 
-  "beacon.title": "Your Beacon",
-  "beacon.subtitle": "Light your beacon when you're awake — find others who are too.",
-  "beacon.light": "Light your beacon",
-  "beacon.on": "Your beacon is lit",
-  "beacon.onDesc": "Other awake moms can see an anonymized glow near you.",
-  "beacon.offDesc": "You're invisible on the map right now.",
-  "beacon.momsAwake": "moms awake nearby",
-  "beacon.findPeer": "Find someone to talk to",
-  "beacon.finding": "Finding a gentle match...",
-  "beacon.mapPrivacy": "Locations are randomized by up to 10 miles. No one ever sees your exact spot or name.",
-  "beacon.prefLabel": "Matching preference",
-  "beacon.locNote": "We use your approximate location only to place an anonymized pin.",
+  "nearby.title": "Who's Nearby",
+  "nearby.subtitle": "Let others know you're awake — find who else is up nearby.",
+  "nearby.light": "Wave hello",
+  "nearby.on": "You waved!",
+  "nearby.onDesc": "Other waving moms can see an anonymized marker near you.",
+  "nearby.offDesc": "Tap to wave and let nearby moms know you're up.",
+  "nearby.momsAwake": "moms waving nearby",
+  "nearby.findPeer": "Find someone to talk to",
+  "nearby.finding": "Finding a gentle match...",
+  "nearby.mapPrivacy": "Locations are randomized by up to 10 miles. No one ever sees your exact spot or name.",
+  "nearby.prefLabel": "Matching preference",
+  "nearby.locNote": "We use your approximate location only to place an anonymized pin.",
 
-  "settings.title": "Beacon Settings",
+  "settings.title": "Nearby Settings",
   "settings.language": "Language",
   "settings.matching": "Peer matching preference",
   "settings.pref.similar": "Prefer similar cultural background",
@@ -89,7 +89,7 @@ const en: Dict = {
 
 const es: Dict = {
   "tab.today": "Hoy",
-  "tab.beacon": "Faro",
+  "tab.nearby": "Cerca de ti",
   "tab.track": "Registro",
   "tab.circle": "Círculo",
   "tab.care": "Cuidado",
@@ -104,20 +104,20 @@ const es: Dict = {
   "common.done": "Listo",
   "common.optional": "Opcional",
 
-  "beacon.title": "Tu Faro",
-  "beacon.subtitle": "Enciende tu faro cuando estés despierta y encuentra a otras que también lo están.",
-  "beacon.light": "Enciende tu faro",
-  "beacon.on": "Tu faro está encendido",
-  "beacon.onDesc": "Otras mamás despiertas ven un brillo anónimo cerca de ti.",
-  "beacon.offDesc": "Ahora eres invisible en el mapa.",
-  "beacon.momsAwake": "mamás despiertas cerca",
-  "beacon.findPeer": "Buscar con quién hablar",
-  "beacon.finding": "Buscando una conexión...",
-  "beacon.mapPrivacy": "Las ubicaciones se aleatorizan hasta 16 km. Nadie ve tu lugar exacto ni tu nombre.",
-  "beacon.prefLabel": "Preferencia de conexión",
-  "beacon.locNote": "Usamos tu ubicación aproximada solo para colocar un punto anónimo.",
+  "nearby.title": "Quién está cerca",
+  "nearby.subtitle": "Muestra que estás despierta y encuentra a otras que también lo están.",
+  "nearby.light": "Saludar con la mano",
+  "nearby.on": "¡Saludaste!",
+  "nearby.onDesc": "Otras mamás que saludan ven una marca anónima cerca de ti.",
+  "nearby.offDesc": "Toca para saludar y avisar a otras mamás cercanas que estás despierta.",
+  "nearby.momsAwake": "mamás saludando cerca",
+  "nearby.findPeer": "Buscar con quién hablar",
+  "nearby.finding": "Buscando una conexión...",
+  "nearby.mapPrivacy": "Las ubicaciones se aleatorizan hasta 16 km. Nadie ve tu lugar exacto ni tu nombre.",
+  "nearby.prefLabel": "Preferencia de conexión",
+  "nearby.locNote": "Usamos tu ubicación aproximada solo para colocar un punto anónimo.",
 
-  "settings.title": "Ajustes del Faro",
+  "settings.title": "Ajustes de Cerca de ti",
   "settings.language": "Idioma",
   "settings.matching": "Preferencia de conexión",
   "settings.pref.similar": "Prefiero un origen cultural similar",
@@ -164,7 +164,7 @@ const es: Dict = {
 
 const hi: Dict = {
   "tab.today": "आज",
-  "tab.beacon": "बीकन",
+  "tab.nearby": "आस-पास",
   "tab.track": "ट्रैक",
   "tab.circle": "सर्कल",
   "tab.care": "देखभाल",
@@ -179,20 +179,20 @@ const hi: Dict = {
   "common.done": "पूर्ण",
   "common.optional": "वैकल्पिक",
 
-  "beacon.title": "आपका बीकन",
-  "beacon.subtitle": "जब आप जागी हों तो अपना बीकन जलाएँ — दूसरों को खोजें जो जागी हैं।",
-  "beacon.light": "अपना बीकन जलाएँ",
-  "beacon.on": "आपका बीकन जल रहा है",
-  "beacon.onDesc": "अन्य जागी माएँ आपके पास एक गुमनाम रोशनी देख सकती हैं।",
-  "beacon.offDesc": "अभी आप मानचित्र पर अदृश्य हैं।",
-  "beacon.momsAwake": "माएँ पास में जाग रही हैं",
-  "beacon.findPeer": "बात करने के लिए किसी को खोजें",
-  "beacon.finding": "एक कोमल साथी खोज रहे हैं...",
-  "beacon.mapPrivacy": "स्थान 16 किमी तक अनियमित किए जाते हैं। कोई भी आपका सटीक स्थान या नाम नहीं देखता।",
-  "beacon.prefLabel": "मिलान वरीयता",
-  "beacon.locNote": "हम केवल एक गुमनाम बिंदु दिखाने के लिए आपके अनुमानित स्थान का उपयोग करते हैं।",
+  "nearby.title": "आस-पास कौन है",
+  "nearby.subtitle": "बताएं कि आप जाग रही हैं — पास में किसे और जागती हुई पाएं।",
+  "nearby.light": "हाथ हिलाएं",
+  "nearby.on": "आपने हाथ हिलाया!",
+  "nearby.onDesc": "हाथ हिलाने वाली अन्य माएँ आपके पास एक गुमनाम चिह्न देख सकती हैं।",
+  "nearby.offDesc": "हाथ हिलाने के लिए टैप करें और पास की माओं को बताएं कि आप जाग रही हैं।",
+  "nearby.momsAwake": "माएँ पास में हाथ हिला रही हैं",
+  "nearby.findPeer": "बात करने के लिए किसी को खोजें",
+  "nearby.finding": "एक कोमल साथी खोज रहे हैं...",
+  "nearby.mapPrivacy": "स्थान 16 किमी तक अनियमित किए जाते हैं। कोई भी आपका सटीक स्थान या नाम नहीं देखता।",
+  "nearby.prefLabel": "मिलान वरीयता",
+  "nearby.locNote": "हम केवल एक गुमनाम बिंदु दिखाने के लिए आपके अनुमानित स्थान का उपयोग करते हैं।",
 
-  "settings.title": "बीकन सेटिंग्स",
+  "settings.title": "आस-पास सेटिंग्स",
   "settings.language": "भाषा",
   "settings.matching": "साथी मिलान वरीयता",
   "settings.pref.similar": "समान सांस्कृतिक पृष्ठभूमि पसंद करें",
@@ -250,7 +250,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      const s = (await storage.getItem<string>("beacon_lang", "")) as string;
+      const s = (await storage.getItem<string>("app_lang", "")) as string;
       if (s) {
         setLangState(s as Lang);
         initialized.current = true;
@@ -268,7 +268,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const setLang = (l: Lang) => {
     setLangState(l);
     initialized.current = true;
-    storage.setItem("beacon_lang", l);
+    storage.setItem("app_lang", l);
   };
 
   const t = (key: string, vars?: Record<string, string | number>) => {

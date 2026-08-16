@@ -52,7 +52,7 @@ export type Profile = {
   concerns: string[];
   postpartum_appt_done?: boolean;
   created_at?: string;
-  // Set via /beacon/settings — optional, opt-in beacon/cultural-matching fields
+  // Set via /nearby/settings — optional, opt-in nearby/cultural-matching fields
   email?: string | null;
   phone?: string | null;
   baby_age_weeks?: number | null;
@@ -100,12 +100,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // ----- Beacon -----
-  beaconMeta: () => req(`/beacon/meta`),
-  updateBeaconSettings: (body: any) =>
-    req(`/beacon/settings`, { method: "PATCH", body: JSON.stringify(body) }),
+  // ----- Nearby -----
+  nearbyMeta: () => req(`/nearby/meta`),
+  updateNearbySettings: (body: any) =>
+    req(`/nearby/settings`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEthnicity: (deviceId: string) =>
-    req(`/beacon/ethnicity/${deviceId}`, { method: "DELETE" }),
+    req(`/nearby/ethnicity/${deviceId}`, { method: "DELETE" }),
 
   presenceToggle: (body: any) =>
     req(`/presence/toggle`, { method: "POST", body: JSON.stringify(body) }),

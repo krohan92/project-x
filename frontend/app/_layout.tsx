@@ -81,7 +81,7 @@ export default function RootLayout() {
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}
                 />
                 <Stack.Screen
-                  name="beacon-settings"
+                  name="nearby-settings"
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}
                 />
                 <Stack.Screen name="thread/[id]" />
@@ -100,6 +100,7 @@ export default function RootLayout() {
                 <Stack.Screen name="celebrations" />
                 <Stack.Screen name="cuddle-calendar" />
                 <Stack.Screen name="support-directory" />
+                <Stack.Screen name="privacy" />
                 <Stack.Screen
                   name="yoga"
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}

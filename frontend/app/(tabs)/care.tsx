@@ -292,6 +292,12 @@ export default function Care() {
             healthcare provider for medical concerns.
           </Txt>
         </View>
+
+        <Pressable testID="care-privacy-link" onPress={() => router.push("/privacy")} style={{ alignItems: "center", marginTop: spacing.md }}>
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textDecorationLine: "underline" }}>
+            Privacy Policy
+          </Txt>
+        </Pressable>
       </ScrollView>
     </View>
   );

@@ -1,10 +1,9 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
   ScrollView,
   Pressable,
-  Switch,
   Linking,
   ActivityIndicator,
 } from "react-native";
@@ -13,6 +12,15 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { useRouter, useFocusEffect } from "expo-router";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  withDelay,
+  Easing,
+  cancelAnimation,
+} from "react-native-reanimated";
 
 import { Txt, Card, Button } from "@/src/components/ui";
 import { PresenceMap } from "@/src/components/PresenceMap";
@@ -28,7 +36,67 @@ const PREF_LABEL: Record<string, string> = {
   diverse: "settings.pref.diverse",
 };
 
-export default function Beacon() {
+function RippleRing({ delayMs, active }: { delayMs: number; active: boolean }) {
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (active) {
+      scale.value = withDelay(
+        delayMs,
+        withRepeat(withTiming(2.1, { duration: 1800, easing: Easing.out(Easing.ease) }), -1, false)
+      );
+      opacity.value = withDelay(
+        delayMs,
+        withRepeat(
+          withTiming(0, { duration: 1800, easing: Easing.out(Easing.ease) }),
+          -1,
+          false
+        )
+      );
+    } else {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+      scale.value = 1;
+      opacity.value = 0;
+    }
+    return () => {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+    };
+  }, [active, delayMs, scale, opacity]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: active ? (1 - (scale.value - 1) / 1.1) * 0.45 : 0,
+  }));
+
+  return <Animated.View style={[styles.rippleRing, style]} />;
+}
+
+function WaveButton({ awake, busy, onPress }: { awake: boolean; busy: boolean; onPress: () => void }) {
+  return (
+    <View style={styles.waveWrap}>
+      <RippleRing delayMs={0} active={awake} />
+      <RippleRing delayMs={600} active={awake} />
+      <RippleRing delayMs={1200} active={awake} />
+      <Pressable
+        testID="wave-button"
+        onPress={onPress}
+        disabled={busy}
+        style={[styles.waveCircle, awake && styles.waveCircleOn]}
+      >
+        {busy ? (
+          <ActivityIndicator color={awake ? "#fff" : colors.brand} />
+        ) : (
+          <Txt style={styles.waveEmoji}>👋</Txt>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
+export default function Nearby() {
   const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -84,8 +152,9 @@ export default function Beacon() {
     }
   };
 
-  const toggleBeacon = async (next: boolean) => {
+  const toggleAwake = async () => {
     if (!deviceId) return;
+    const next = !awake;
     setBusy(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
@@ -120,10 +189,10 @@ export default function Beacon() {
     <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View style={{ flex: 1 }}>
-          <Txt display style={styles.title}>{t("beacon.title")}</Txt>
-          <Txt style={{ color: colors.muted }}>{t("beacon.subtitle")}</Txt>
+          <Txt display style={styles.title}>{t("nearby.title")}</Txt>
+          <Txt style={{ color: colors.muted }}>{t("nearby.subtitle")}</Txt>
         </View>
-        <Pressable testID="beacon-settings-button" onPress={() => router.push("/beacon-settings")} hitSlop={10}>
+        <Pressable testID="nearby-settings-button" onPress={() => router.push("/nearby-settings")} hitSlop={10}>
           <Feather name="settings" size={22} color={colors.onSurface} />
         </Pressable>
       </View>
@@ -132,32 +201,15 @@ export default function Beacon() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Light beacon */}
-        <Card style={[styles.beaconCard, awake && styles.beaconCardOn]}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-            <View style={[styles.beaconGlow, awake && styles.beaconGlowOn]}>
-              <Feather name="radio" size={24} color={awake ? colors.onBrandPrimary : colors.muted} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Txt display style={{ fontSize: fontSize.xl }}>
-                {awake ? t("beacon.on") : t("beacon.light")}
-              </Txt>
-              <Txt style={{ color: colors.onSurfaceTertiary, marginTop: 2, lineHeight: 20 }}>
-                {awake ? t("beacon.onDesc") : t("beacon.offDesc")}
-              </Txt>
-            </View>
-            {busy ? (
-              <ActivityIndicator color={colors.brand} />
-            ) : (
-              <Switch
-                testID="beacon-toggle"
-                value={awake}
-                onValueChange={toggleBeacon}
-                trackColor={{ false: colors.surfaceTertiary, true: colors.brandSecondary }}
-                thumbColor={awake ? colors.brandPrimary : "#fff"}
-              />
-            )}
-          </View>
+        {/* Wave */}
+        <Card style={[styles.waveCard, awake && styles.waveCardOn]}>
+          <WaveButton awake={awake} busy={busy} onPress={toggleAwake} />
+          <Txt display style={{ fontSize: fontSize.xl, textAlign: "center", marginTop: spacing.md }}>
+            {awake ? t("nearby.on") : t("nearby.light")}
+          </Txt>
+          <Txt style={{ color: colors.onSurfaceTertiary, marginTop: 4, lineHeight: 20, textAlign: "center" }}>
+            {awake ? t("nearby.onDesc") : t("nearby.offDesc")}
+          </Txt>
         </Card>
 
         {permBlocked && (
@@ -173,7 +225,7 @@ export default function Beacon() {
         <View style={styles.countRow}>
           <View style={styles.countDot} />
           <Txt weight="500" style={{ fontSize: fontSize.lg }}>
-            {count} {t("beacon.momsAwake")}
+            {count} {t("nearby.momsAwake")}
           </Txt>
         </View>
 
@@ -182,16 +234,16 @@ export default function Beacon() {
         <View style={styles.privacyRow}>
           <Feather name="shield" size={14} color={colors.success} />
           <Txt style={{ color: colors.muted, flex: 1, fontSize: fontSize.sm, lineHeight: 18 }}>
-            {t("beacon.mapPrivacy")}
+            {t("nearby.mapPrivacy")}
           </Txt>
         </View>
 
         {/* Matching */}
         <Card style={{ marginTop: spacing.lg }}>
-          <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{t("beacon.prefLabel")}</Txt>
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{t("nearby.prefLabel")}</Txt>
           <Pressable
             testID="matching-pref-link"
-            onPress={() => router.push("/beacon-settings")}
+            onPress={() => router.push("/nearby-settings")}
             style={styles.prefRow}
           >
             <Txt weight="500" style={{ fontSize: fontSize.lg, flex: 1 }}>
@@ -201,7 +253,7 @@ export default function Beacon() {
           </Pressable>
           <Button
             testID="find-peer-button"
-            label={matching ? t("beacon.finding") : t("beacon.findPeer")}
+            label={matching ? t("nearby.finding") : t("nearby.findPeer")}
             onPress={findPeer}
             loading={matching}
             icon={!matching ? <Feather name="message-circle" size={18} color={colors.onBrandPrimary} /> : undefined}
@@ -224,17 +276,35 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   title: { fontSize: fontSize["2xl"] },
-  beaconCard: { marginBottom: spacing.md },
-  beaconCardOn: { backgroundColor: colors.brandTertiary + "40", borderColor: colors.brandPrimary },
-  beaconGlow: {
-    width: 52,
-    height: 52,
+  waveCard: { marginBottom: spacing.md, alignItems: "center", paddingVertical: spacing.xl },
+  waveCardOn: { backgroundColor: colors.brandTertiary + "40", borderColor: colors.brandPrimary },
+  waveWrap: {
+    width: 130,
+    height: 130,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rippleRing: {
+    position: "absolute",
+    width: 90,
+    height: 90,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandPrimary,
+  },
+  waveCircle: {
+    width: 90,
+    height: 90,
     borderRadius: radius.pill,
     backgroundColor: colors.surfaceTertiary,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
-  beaconGlowOn: { backgroundColor: colors.brandPrimary },
+  waveCircleOn: { backgroundColor: colors.brandPrimary },
+  waveEmoji: { fontSize: 40 },
   permNote: {
     flexDirection: "row",
     gap: spacing.sm,

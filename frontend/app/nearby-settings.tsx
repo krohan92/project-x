@@ -17,7 +17,7 @@ const PREFS = [
   { key: "diverse", label: "settings.pref.diverse" },
 ];
 
-export default function BeaconSettings() {
+export default function NearbySettings() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile, deviceId, refresh } = useProfile();
@@ -30,12 +30,12 @@ export default function BeaconSettings() {
   const [allowCultural, setAllowCultural] = useState<boolean>(profile?.allow_cultural_match ?? true);
 
   useEffect(() => {
-    api.beaconMeta().then((m) => setTags(m.ethnicity_tags || [])).catch(() => {});
+    api.nearbyMeta().then((m) => setTags(m.ethnicity_tags || [])).catch(() => {});
   }, []);
 
   const persist = async (patch: any) => {
     if (!deviceId) return;
-    await api.updateBeaconSettings({ device_id: deviceId, ...patch });
+    await api.updateNearbySettings({ device_id: deviceId, ...patch });
     await refresh();
   };
 
