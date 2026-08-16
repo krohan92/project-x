@@ -91,6 +91,20 @@ export default function Care() {
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Card>
         </Pressable>
+        <Pressable testID="care-support-directory" onPress={() => router.push("/support-directory")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: "#93B4D6" + "40" }]}>
+              <Feather name="heart" size={20} color="#4C6E8F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Postpartum Support</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                Real lactation, doula, PT, and therapy contacts nearby
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
         <Pressable testID="care-yoga" onPress={() => router.push("/yoga")}>
           <Card style={styles.rowCard}>
             <View style={[styles.iconBubble, { backgroundColor: "#B08FC7" + "40" }]}>

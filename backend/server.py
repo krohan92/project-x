@@ -2065,6 +2065,50 @@ async def celebration_vendors(category: Optional[str] = None):
     return CELEBRATION_VENDORS
 
 
+# ----- Postpartum Support Directory -----
+# Real local professionals, verified before inclusion — not a party vendor
+# list. This is the one directory in the app where getting a listing wrong
+# (a closed practice, a bad number) actually matters, so every entry here
+# was checked individually rather than pulled from a single source.
+SUPPORT_CATEGORIES = [
+    {"key": "lactation", "label": "Lactation Support", "icon": "heart"},
+    {"key": "doula", "label": "Postpartum Doulas", "icon": "users"},
+    {"key": "pelvic_pt", "label": "Pelvic Floor PT", "icon": "activity"},
+    {"key": "therapy", "label": "Postpartum Mental Health", "icon": "sun"},
+]
+
+POSTPARTUM_SUPPORT_PROVIDERS = {
+    "lactation": [
+        {"name": "Valley Children's Healthcare — Lactation Services", "note": "Hospital-affiliated IBCLC team, in-unit and phone consultations", "phone": "559-353-5427"},
+        {"name": "Tess Johnson Lactation Services", "note": "IBCLC & RN, in-home visits, same-day availability in Fresno/Clovis", "website": "http://www.tjlactation.com"},
+    ],
+    "doula": [
+        {"name": "Peaceful Passages Birthing Support Center", "note": "Postpartum doula, lactation, and meal-train coordination — 2575 E. Perrin Ave Suite 103, Fresno", "website": "https://peacefulpassagesbirthingsupportcenter.com"},
+        {"name": "Mommy's Helper Postpartum In-Home Help", "note": "Serves Fresno, Clovis & Madera — accepts Medi-Cal, Kaiser, and Anthem", "website": "https://nextdoor.com/pages/mommys-helper-postpartum-in-home-help-service-clovis-ca/"},
+    ],
+    "pelvic_pt": [
+        {"name": "Pelvic Health Clinic — Clovis Community Hospital", "note": "Hospital-affiliated pelvic floor PT for pre- and post-birth recovery", "website": "https://www.communitymedical.org/specialties-and-departments/rehabilitation/physical-therapy/pelvic-health-physical-therapy"},
+        {"name": "SJ Hands On Physical Therapy", "note": "Fresno — postpartum recovery, incontinence, core stability", "phone": "559-570-3567"},
+    ],
+    "therapy": [
+        {"name": "Central Valley Family Therapy", "note": "Dedicated Pregnancy + Postpartum Distress program (PMADs) — 7170 N Financial Dr Suite 110, Fresno", "phone": "559-691-6840"},
+        {"name": "Michelle Kurtz, LCSW", "note": "Perinatal mental health specialist, based in Clovis", "website": "https://www.psychologytoday.com/us/therapists/ca/clovis"},
+    ],
+}
+
+
+@api_router.get("/support-directory/categories")
+async def support_directory_categories():
+    return SUPPORT_CATEGORIES
+
+
+@api_router.get("/support-directory")
+async def support_directory(category: Optional[str] = None):
+    if category:
+        return POSTPARTUM_SUPPORT_PROVIDERS.get(category, [])
+    return POSTPARTUM_SUPPORT_PROVIDERS
+
+
 # ----- Personal Events: appointments + celebrations, manual or photo-scanned -----
 EVENT_CATEGORIES = [
     {"key": "appointment", "label": "Appointment", "icon": "clipboard"},

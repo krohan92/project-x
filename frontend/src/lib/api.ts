@@ -255,4 +255,8 @@ export const api = {
   // ----- Wellbeing self-check -----
   wellbeingSelfCheck: (deviceId: string) => req(`/wellbeing/self-check/${deviceId}`),
   predictiveFeedNudge: (deviceId: string) => req(`/baby-log/${deviceId}/predictive-nudge`),
+
+  // ----- Postpartum Support Directory -----
+  supportCategories: () => req(`/support-directory/categories`),
+  supportProviders: (category?: string) => req(`/support-directory${category ? `?category=${category}` : ""}`),
 };
