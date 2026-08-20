@@ -115,6 +115,7 @@ export default function Meetups() {
   const [useLocation, setUseLocation] = useState(false);
   const [locating, setLocating] = useState(false);
   const [nearestLabel, setNearestLabel] = useState<string | null>(null);
+  const [nearestDistance, setNearestDistance] = useState<number | null>(null);
   const [category, setCategory] = useState("all");
   const [meetups, setMeetups] = useState<any[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -176,6 +177,7 @@ export default function Meetups() {
       const nearest = await api.nearestNeighborhood(pos.coords.latitude, pos.coords.longitude);
       setNeighborhood(nearest.key);
       setNearestLabel(nearest.label);
+      setNearestDistance(nearest.distance_km);
       Haptics.selectionAsync();
     } catch {
       // Location unavailable — leave whatever neighborhood was already
@@ -266,7 +268,7 @@ export default function Meetups() {
           <Txt style={{ color: useLocation ? colors.onSurface : colors.muted, fontSize: fontSize.sm, flex: 1 }}>
             {useLocation
               ? nearestLabel
-                ? `Showing meetups near you — closest is ${nearestLabel}`
+                ? `Closest is ${nearestLabel}${nearestDistance != null ? ` (${(nearestDistance * 0.621).toFixed(1)} mi away)` : ""} — tap another area below if that's not right`
                 : "Using your location"
               : "Use my location to find nearby meetups"}
           </Txt>

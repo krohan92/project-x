@@ -2083,8 +2083,14 @@ class MealCheckinCreate(BaseModel):
 # next-phase, lighter-weight option — the venue list there will grow as
 # more moms use it there.
 MEETUP_NEIGHBORHOODS = [
-    {"key": "riverstone", "label": "Riverstone", "city": "Madera", "lat": 36.9613, "lng": -120.0233},
-    {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera", "lat": 37.0430, "lng": -119.8930},
+    # Riverstone and Tesoro Viejo are both off Highway 41 in southern Madera
+    # County (Riverstone at Avenue 12, Tesoro Viejo at Avenue 15) — NOT near
+    # Madera's city center, which is where the previous coordinates
+    # mistakenly pointed, off by roughly 15+ miles. That error was
+    # confirmed by real-device testing matching people at Riverstone to
+    # Copper River Ranch instead.
+    {"key": "riverstone", "label": "Riverstone", "city": "Madera", "lat": 36.9430, "lng": -119.7330},
+    {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera", "lat": 36.9850, "lng": -119.7350},
     {"key": "copper_river", "label": "Copper River Ranch (Terrabella)", "city": "Fresno", "lat": 36.8999, "lng": -119.7328},
     {"key": "clovis", "label": "Clovis", "city": "Clovis", "lat": 36.8252, "lng": -119.7029},
     {"key": "fresno", "label": "Fresno (general)", "city": "Fresno", "lat": 36.7378, "lng": -119.7871},
