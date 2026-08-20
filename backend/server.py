@@ -152,19 +152,20 @@ class CommentCreate(BaseModel):
 # Static / research-backed content
 # ---------------------------------------------------------------------------
 QUOTES = [
-    {"text": "You are not the same as you were before, and that is okay. You are becoming.", "author": "Cuddle"},
+    {"text": "Right now, in this moment, you are enough.", "author": "Cuddle"},
+    {"text": "Take a slow breath. You are safe, and you are doing okay.", "author": "Cuddle"},
+    {"text": "You don't have to be perfect today. Just present.", "author": "Cuddle"},
     {"text": "Being a mother is learning about strengths you didn't know you had.", "author": "Linda Wooten"},
     {"text": "You don't have to be perfect to be an amazing mom.", "author": "Cuddle"},
-    {"text": "Rest is not a reward for finishing. It is fuel for continuing.", "author": "Cuddle"},
+    {"text": "Rest isn't something you earn. It's something you deserve, simply.", "author": "Cuddle"},
     {"text": "The days are long, but the years are short. Be gentle with today.", "author": "Cuddle"},
     {"text": "You are doing a beautiful job, even on the days it doesn't feel like it.", "author": "Cuddle"},
-    {"text": "Your baby doesn't need a perfect mother. They need a present one — and you are here.", "author": "Cuddle"},
-    {"text": "Healing is not linear. Some days will feel heavier, and that's part of it.", "author": "Cuddle"},
-    {"text": "You can love this life and still find parts of it incredibly hard. Both are true.", "author": "Cuddle"},
+    {"text": "Your baby doesn't need a perfect mother. They need a present one, and you are here.", "author": "Cuddle"},
+    {"text": "You can love this life and still find parts of it hard. Both are true, and both are okay.", "author": "Cuddle"},
     {"text": "Asking for help is not giving up. It's how you keep going.", "author": "Cuddle"},
-    {"text": "Small moments count. A held gaze, a soft word — you're building something real.", "author": "Cuddle"},
+    {"text": "Small moments count. A held gaze, a soft word: you're building something real.", "author": "Cuddle"},
     {"text": "You get to have needs too. Meeting them isn't selfish, it's sustainable.", "author": "Cuddle"},
-    {"text": "Some days survival is the whole job, and that's still doing it well.", "author": "Cuddle"},
+    {"text": "One gentle moment at a time is enough.", "author": "Cuddle"},
 ]
 
 # EPDS — Edinburgh Postnatal Depression Scale (Cox, Holden & Sagovsky, 1987)
