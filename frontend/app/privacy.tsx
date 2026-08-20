@@ -88,11 +88,16 @@ export default function PrivacyPolicy() {
           times, diaper changes, sleep duration). We do not use this information for advertising.
         </P>
 
-        <Txt style={styles.h3}>2.4 Location Information (Nearby)</Txt>
+        <Txt style={styles.h3}>2.4 Location Information (Nearby and Meetups)</Txt>
         <P>
           If you enable Nearby, we collect an approximate location, which we deliberately distort before it
           is ever shown to other users: randomized and snapped to a coarse grid, so no one can see your
-          precise or real-time location. We do not collect precise GPS location for any other feature. Nearby
+          precise or real-time location. This distorted location is stored so Nearby can work. We do not
+          collect precise GPS location for any other feature, with one exception: if you turn on "Use my
+          location" in Meetups, your device's coordinates are sent to our server for a single one-time
+          calculation, to determine which of a handful of fixed local areas is closest to you. Those
+          coordinates are used only for that calculation and are never stored or shared with any other user.
+          Both of these location features are entirely optional and can be turned off at any time. Nearby
           also lets you optionally share your ethnicity or cultural background, a cultural-matching
           preference, your due date or baby's age, and your timezone and language. Ethnicity/cultural
           background is sensitive personal information under many privacy laws; sharing it is entirely
@@ -117,8 +122,9 @@ export default function PrivacyPolicy() {
         <Txt style={styles.h3}>2.7 Technical & Push Notification Information</Txt>
         <P>
           A push notification token, used only to deliver notifications you'd expect from the relevant
-          feature (Tag Team nudges, event reminders, an SOS alert), plus standard technical information
-          generated automatically by any internet request.
+          feature (Tag Team nudges, an SOS alert, event and appointment reminders, a heads-up before a
+          predicted feeding time, and an occasional wellbeing check-in if you haven't logged eating or rest
+          in a while), plus standard technical information generated automatically by any internet request.
         </P>
 
         <Txt style={styles.h3}>2.8 Information From Other Users, About You</Txt>
@@ -143,11 +149,16 @@ export default function PrivacyPolicy() {
 
         <H2>5. AI Processing and Third-Party Service Providers</H2>
         <P>
-          Certain features send information to third-party providers who process it on our behalf: Anthropic
-          (Claude AI) processes chat messages, pattern summaries, and scanned photos to generate responses and
-          extract information. Cuddle uses Anthropic's commercial API (not Anthropic's consumer Claude.ai
-          product). Under Anthropic's API/commercial terms, data is not used to train Anthropic's models by
-          default, and API inputs/outputs are automatically deleted after 7 days.
+          Several features send information to Anthropic (Claude AI) to generate a response or extract
+          information: your messages in "Talk to Cuddle" (along with a brief summary of your recent
+          self-reported mood pattern, used to make responses more relevant); the specific symptoms, pain
+          level, and bleeding level you select in a Recovery check-in, when generating a tailored note about
+          that combination; your mood scores, Tag Team balance, and meetup activity, when generating your
+          Weekly Insights reflection or an on-demand "Catch Me Up" summary; your mood rating and any note
+          after a Meetup, when generating a reflection; and photos you choose to scan (invitations,
+          appointment cards) to extract event details. Cuddle uses Anthropic's commercial API (not Anthropic's
+          consumer Claude.ai product). Under Anthropic's API/commercial terms, data is not used to train
+          Anthropic's models by default, and API inputs/outputs are automatically deleted after 7 days.
         </P>
         <Placeholder>
           [Verify this remains accurate at anthropic.com before publishing. AI provider data policies can change.]
@@ -168,7 +179,7 @@ export default function PrivacyPolicy() {
         </P>
 
         <H2>7. Your Choices and Rights</H2>
-        <P>You can view and update most profile information directly in the App. Nearby participation, including ethnicity/cultural sharing, is optional and can be disabled anytime. You can disable notifications at the device level anytime.</P>
+        <P>You can view and update most profile information directly in the App. Nearby participation, including ethnicity/cultural sharing, is optional and can be disabled anytime, and Meetups' "Use my location" toggle can be turned off anytime too. You can disable notifications at the device level anytime.</P>
         <P>
           You can permanently delete all of your data at any time directly from the App: go to Care → Delete
           My Data. This immediately and permanently removes your profile, logs, posts, and messages from our
