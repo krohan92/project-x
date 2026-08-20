@@ -85,7 +85,6 @@ export default function RootLayout() {
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}
                 />
                 <Stack.Screen name="thread/[id]" />
-                <Stack.Screen name="peer/[room]" />
                 <Stack.Screen name="join/[code]" />
                 <Stack.Screen name="shop" />
                 <Stack.Screen name="shop-item/[id]" />

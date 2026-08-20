@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Depends
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,7 +7,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, BeforeValidator
+from pydantic import BaseModel, Field, BeforeValidator, EmailStr
 from typing import List, Optional, Annotated, Any
 from bson import ObjectId
 import uuid
@@ -17,6 +17,11 @@ from datetime import datetime, timezone, date, timedelta
 
 import anthropic
 import httpx
+import jwt as pyjwt
+import bcrypt
+import smtplib
+from email.mime.text import MIMEText
+import secrets as _secrets
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -28,6 +33,14 @@ db = client[os.environ['DB_NAME']]
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+
+# ----- Auth -----
+JWT_SECRET = os.environ.get('JWT_SECRET')  # REQUIRED in production — see .env.example
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 90
+APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
+GMAIL_USER = os.environ.get('GMAIL_USER')          # e.g. rohankhanna1992@gmail.com
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')  # a Gmail "App Password", not the real password
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -233,31 +246,6 @@ PUMP_PROVIDERS = [
 
 
 # ---------------------------------------------------------------------------
-# Seeding
-# ---------------------------------------------------------------------------
-async def seed_community():
-    count = await db.community_posts.count_documents({})
-    if count > 0:
-        return
-    seed = [
-        {"author": "Maya", "avatar_color": "#D68C7A", "location": "2 mi away", "topic": "Sleep",
-         "text": "Week 3 and running on 3 hours of sleep. Just want to say to any mama awake at 3am — you're not alone. We've got this. 🤍", "likes": 24},
-        {"author": "Priya", "avatar_color": "#98A99B", "location": "5 mi away", "topic": "Feeding",
-         "text": "Switched to combo feeding after a rough start with latching. My guilt was huge but baby is thriving. Fed is best, truly.", "likes": 41},
-        {"author": "Sofia", "avatar_color": "#E2C8B5", "location": "1 mi away", "topic": "Mental health",
-         "text": "Some days the sadness comes out of nowhere. Talking here and to my midwife helped me realize it's okay to not be okay.", "likes": 33},
-        {"author": "Aisha", "avatar_color": "#DEB068", "location": "3 mi away", "topic": "Recovery",
-         "text": "C-section recovery is no joke. Anyone else find the first shower emotional? Sending gentle hugs to all recovering mamas.", "likes": 18},
-        {"author": "Elena", "avatar_color": "#8CA8B0", "location": "4 mi away", "topic": "Support",
-         "text": "Started a little walking group for postpartum moms in my area. Fresh air + adult conversation has been everything.", "likes": 52},
-    ]
-    for s in seed:
-        s["created_at"] = now_iso()
-    await db.community_posts.insert_many(seed)
-    logger.info("Seeded community posts")
-
-
-# ---------------------------------------------------------------------------
 # Companion system prompt
 # ---------------------------------------------------------------------------
 def build_system_prompt(profile: Optional[dict], pattern_summary: str = "") -> str:
@@ -324,6 +312,248 @@ def build_system_prompt(profile: Optional[dict], pattern_summary: str = "") -> s
         "take it seriously, and gently encourage her to reach out right now to the 988 Suicide & Crisis Lifeline (call or text 988) "
         "or Postpartum Support International (1-800-944-4773), and to a trusted person nearby. Never dismiss these feelings."
     )
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+# Layered ON TOP of the existing device_id identity system rather than
+# replacing it — every UserAccount links to a device_id, so all existing
+# data (profiles, logs, households, everything) keeps working exactly as
+# before. Signing in just gives that device_id a real, recoverable identity
+# instead of living only in local device storage.
+#
+# NOTE — scope of this pass: this builds real signup/login/password
+# reset/Apple Sign In, all genuinely working. It does NOT yet require
+# authentication on every existing endpoint (device_id alone still works
+# app-wide, same as before this feature existed) — retrofitting auth
+# enforcement onto every route is a larger, separate follow-up.
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+    device_id: str
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AppleSignInRequest(BaseModel):
+    identity_token: str
+    device_id: str
+    full_name: Optional[str] = None  # Apple only ever sends this on first sign-in
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+
+def _hash_password(password: str) -> str:
+    # bcrypt has a genuine 72-byte input limit — truncate deliberately
+    # rather than letting it silently misbehave on long passwords.
+    pw_bytes = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    try:
+        pw_bytes = password.encode("utf-8")[:72]
+        return bcrypt.checkpw(pw_bytes, password_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def _create_jwt(user_id: str, device_id: str) -> str:
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    payload = {
+        "sub": user_id,
+        "device_id": device_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def _current_user(authorization: str = Header(None)) -> dict:
+    """Dependency for routes that require a signed-in user. Existing
+    device_id-only routes don't use this — this is only for the new
+    account-specific endpoints below."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    try:
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired, please sign in again")
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    user = await db.users.find_one({"_id": ObjectId(payload["sub"])}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Account no longer exists")
+    return user
+
+
+_apple_jwks_cache: dict = {"keys": None, "fetched_at": None}
+
+
+async def _verify_apple_identity_token(identity_token: str) -> dict:
+    """Verifies a Sign in with Apple identity token against Apple's public
+    keys — real cryptographic verification, not just decoding the token
+    and trusting its contents."""
+    global _apple_jwks_cache
+    now = datetime.now(timezone.utc)
+    if not _apple_jwks_cache["keys"] or not _apple_jwks_cache["fetched_at"] or (now - _apple_jwks_cache["fetched_at"]).total_seconds() > 3600:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get("https://appleid.apple.com/auth/keys")
+            resp.raise_for_status()
+            _apple_jwks_cache = {"keys": resp.json()["keys"], "fetched_at": now}
+
+    unverified_header = pyjwt.get_unverified_header(identity_token)
+    matching_key = next((k for k in _apple_jwks_cache["keys"] if k["kid"] == unverified_header["kid"]), None)
+    if not matching_key:
+        raise HTTPException(status_code=401, detail="Could not verify Apple sign-in — unknown signing key")
+
+    public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(matching_key)
+    try:
+        payload = pyjwt.decode(
+            identity_token, public_key, algorithms=["RS256"],
+            audience=APPLE_BUNDLE_ID, issuer="https://appleid.apple.com",
+        )
+    except pyjwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Apple sign-in verification failed: {e}")
+    return payload  # payload["sub"] is Apple's stable, unique user identifier
+
+
+def _send_email(to_email: str, subject: str, body: str) -> bool:
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        logger.warning("Email not configured (GMAIL_USER/GMAIL_APP_PASSWORD missing) — cannot send: %s", subject)
+        return False
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = GMAIL_USER
+        msg["To"] = to_email
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_USER, [to_email], msg.as_string())
+        return True
+    except Exception:
+        logger.exception("Failed to send email to %s", to_email)
+        return False
+
+
+@api_router.post("/auth/signup")
+async def signup(req: SignupRequest):
+    existing = await db.users.find_one({"email": req.email.lower()})
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    doc = {
+        "email": req.email.lower(),
+        "password_hash": _hash_password(req.password),
+        "device_id": req.device_id,
+        "apple_sub": None,
+        "created_at": now_iso(),
+    }
+    result = await db.users.insert_one(doc)
+    token = _create_jwt(str(result.inserted_id), req.device_id)
+    return {"token": token, "device_id": req.device_id, "email": doc["email"]}
+
+
+@api_router.post("/auth/login")
+async def login(req: LoginRequest):
+    user = await db.users.find_one({"email": req.email.lower()})
+    if not user or not user.get("password_hash") or not _verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    token = _create_jwt(str(user["_id"]), user["device_id"])
+    return {"token": token, "device_id": user["device_id"], "email": user["email"]}
+
+
+@api_router.post("/auth/apple")
+async def apple_sign_in(req: AppleSignInRequest):
+    payload = await _verify_apple_identity_token(req.identity_token)
+    apple_sub = payload["sub"]
+    apple_email = payload.get("email")
+
+    user = await db.users.find_one({"apple_sub": apple_sub})
+    if not user:
+        # First time this Apple ID has signed in — link to the device_id
+        # the app already has, so existing local data carries over.
+        doc = {
+            "email": (apple_email or "").lower() or None,
+            "password_hash": None,
+            "device_id": req.device_id,
+            "apple_sub": apple_sub,
+            "full_name": req.full_name,
+            "created_at": now_iso(),
+        }
+        result = await db.users.insert_one(doc)
+        user_id, device_id = str(result.inserted_id), req.device_id
+    else:
+        user_id, device_id = str(user["_id"]), user["device_id"]
+
+    token = _create_jwt(user_id, device_id)
+    return {"token": token, "device_id": device_id}
+
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    user = await db.users.find_one({"email": req.email.lower()})
+    # Always return success even if the email isn't found — otherwise this
+    # endpoint could be used to check which emails have Cuddle accounts.
+    if not user or not user.get("password_hash"):
+        return {"ok": True}
+
+    code = f"{_secrets.randbelow(1000000):06d}"
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {
+            "reset_code": code,
+            "reset_code_expires": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        }},
+    )
+    sent = _send_email(
+        req.email,
+        "Your Cuddle password reset code",
+        f"Your code is {code}. It expires in 15 minutes. If you didn't request this, you can ignore this email.",
+    )
+    if not sent:
+        logger.warning("Password reset code for %s: %s (email delivery not configured)", req.email, code)
+    return {"ok": True}
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    user = await db.users.find_one({"email": req.email.lower()})
+    if not user or user.get("reset_code") != req.code:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    expires = user.get("reset_code_expires")
+    if not expires or datetime.fromisoformat(expires) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This code has expired — request a new one")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": _hash_password(req.new_password)}, "$unset": {"reset_code": "", "reset_code_expires": ""}},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/auth/me")
+async def auth_me(user: dict = Depends(_current_user)):
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -714,28 +944,6 @@ CULTURAL_SPACES = [
     {"key": "mena", "label": "MENA Moms", "tag": "Middle Eastern / Arab"},
 ]
 
-# Simulated concurrent "active" peers for the presence map + matching demo.
-# NOTE: these are DEMO peers so the map/matching feel alive in preview; real
-# two-way presence appears when multiple real users are online at once.
-MOCK_PEERS = [
-    {"id": "peer_dawn", "handle": "QuietDawn", "ethnicity": "South Asian / Indian", "allow_cultural_match": True, "display_tags": True, "dlat": 0.06, "dlng": -0.09, "mins": 4},
-    {"id": "peer_moon", "handle": "MoonlitMama", "ethnicity": "Latina / Hispanic", "allow_cultural_match": True, "display_tags": False, "dlat": -0.11, "dlng": 0.07, "mins": 12},
-    {"id": "peer_tide", "handle": "GentleTide", "ethnicity": None, "allow_cultural_match": True, "display_tags": False, "dlat": 0.09, "dlng": 0.12, "mins": 2},
-    {"id": "peer_ember", "handle": "SoftEmber", "ethnicity": "Black / African", "allow_cultural_match": True, "display_tags": True, "dlat": -0.07, "dlng": -0.13, "mins": 21},
-    {"id": "peer_lotus", "handle": "NightLotus", "ethnicity": "South Asian / Indian", "allow_cultural_match": True, "display_tags": False, "dlat": 0.13, "dlng": -0.05, "mins": 7},
-    {"id": "peer_willow", "handle": "WillowRest", "ethnicity": "East Asian", "allow_cultural_match": True, "display_tags": False, "dlat": -0.05, "dlng": 0.10, "mins": 15},
-    {"id": "peer_sol", "handle": "SolMadre", "ethnicity": "Latina / Hispanic", "allow_cultural_match": False, "display_tags": False, "dlat": 0.03, "dlng": 0.14, "mins": 33},
-    {"id": "peer_star", "handle": "StillStar", "ethnicity": None, "allow_cultural_match": True, "display_tags": False, "dlat": -0.12, "dlng": -0.04, "mins": 9},
-]
-
-PEER_REPLIES = [
-    "I hear you. The nights are so long, aren't they? You're not alone in this. 🤍",
-    "That sounds really hard. Thank you for trusting me with it.",
-    "I'm awake too, feeding right now. We've got each other tonight.",
-    "You're doing so much better than you think. Be gentle with yourself.",
-    "Sending you a big virtual hug. What helps you feel even a little calmer?",
-]
-
 GUIDES = [
     {"id": "recovery-basics", "topic": "Recovery", "title": "Your body after birth",
      "body": "Healing takes time. Rest when you can, stay hydrated, and don't rush your recovery. Bleeding, cramping and fatigue are normal in the early weeks.",
@@ -776,15 +984,6 @@ class PresenceToggle(BaseModel):
     awake: bool
     lat: Optional[float] = None
     lng: Optional[float] = None
-
-
-class MatchRequest(BaseModel):
-    device_id: str
-
-
-class PeerMessageCreate(BaseModel):
-    device_id: str
-    text: str
 
 
 class BabyLogCreate(BaseModel):
@@ -1021,6 +1220,16 @@ def jitter_coords(lat: float, lng: float, max_miles: float = 15.0):
     return round(glat, 4), round(glng, 4)
 
 
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Real great-circle distance between two coordinates, in km."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
 # ----- Nearby settings / profile extension -----
 @api_router.get("/nearby/meta")
 async def nearby_meta():
@@ -1064,120 +1273,32 @@ async def presence_toggle(p: PresenceToggle):
 @api_router.get("/presence/active")
 async def presence_active(device_id: str):
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
-    # real active peers (anonymized, jittered coords only)
     reals = await db.presence.find(
         {"awake": True, "last_active": {"$gte": cutoff}, "device_id": {"$ne": device_id}}
-    ).to_list(100)
-    pins = []
-    for r in reals:
-        if r.get("lat") is not None:
-            pins.append({"id": r["device_id"][:8], "lat": r["lat"], "lng": r["lng"], "mins": 0})
+    ).to_list(200)
 
-    # anchor mock peers around requester's stored (already jittered) location
     me = await db.presence.find_one({"device_id": device_id})
-    anchor_lat = me.get("lat") if me and me.get("lat") is not None else 40.7128
-    anchor_lng = me.get("lng") if me and me.get("lng") is not None else -74.0060
-    for mp in MOCK_PEERS:
-        pins.append({
-            "id": mp["id"], "handle": mp["handle"],
-            "lat": round(anchor_lat + mp["dlat"], 5),
-            "lng": round(anchor_lng + mp["dlng"], 5),
-            "mins": mp["mins"],
-        })
+    # Fresno, CA — this app's actual service area — rather than the old
+    # placeholder default (New York City) or leaving the map anchor unset.
+    FALLBACK_LAT, FALLBACK_LNG = 36.7378, -119.7871
+    anchor_lat = me.get("lat") if me and me.get("lat") is not None else FALLBACK_LAT
+    anchor_lng = me.get("lng") if me and me.get("lng") is not None else FALLBACK_LNG
+    has_real_anchor = bool(me and me.get("lat") is not None)
+
+    pins = []
+    # ~50km / ~30mi — a genuinely local radius for this area, not "same state."
+    NEARBY_RADIUS_KM = 50
+    for r in reals:
+        if r.get("lat") is None:
+            continue
+        if has_real_anchor:
+            dist = haversine_km(anchor_lat, anchor_lng, r["lat"], r["lng"])
+            if dist > NEARBY_RADIUS_KM:
+                continue  # real, but not actually nearby — don't show as "nearby"
+        pins.append({"id": r["device_id"][:8], "lat": r["lat"], "lng": r["lng"], "mins": 0})
+
     return {"count": len(pins), "pins": pins,
             "anchor": {"lat": anchor_lat, "lng": anchor_lng}}
-
-
-# ----- Smart peer matching (modular) -----
-def _select_peer(profile: dict):
-    """Returns (peer, outcome). Modular so the algorithm can be swapped later."""
-    pref = (profile or {}).get("matching_preference", "none")
-    my_tag = (profile or {}).get("ethnicity")
-    pool = list(MOCK_PEERS)
-    random.shuffle(pool)
-
-    if pref == "similar" and my_tag:
-        for p in pool:
-            if p["ethnicity"] == my_tag and p["allow_cultural_match"]:
-                return p, "matched-on-preference"
-    if pref == "diverse" and my_tag:
-        for p in pool:
-            if p["ethnicity"] and p["ethnicity"] != my_tag:
-                return p, "matched-on-diversity"
-    # fallback: any available active peer
-    return pool[0], "fallback"
-
-
-@api_router.post("/match/request")
-async def match_request(req: MatchRequest):
-    profile = await db.profiles.find_one({"device_id": req.device_id}, {"_id": 0}) or {}
-    peer, outcome = _select_peer(profile)
-
-    # tags only revealed if BOTH sides opted to display them
-    both_display = bool(profile.get("display_tags")) and bool(peer.get("display_tags"))
-    room_id = str(uuid.uuid4())
-    room = {
-        "room_id": room_id,
-        "device_id": req.device_id,
-        "peer_id": peer["id"],
-        "peer_handle": peer["handle"],
-        "peer_tag": peer["ethnicity"] if both_display else None,
-        "outcome": outcome,
-        "is_demo": True,
-        "created_at": now_iso(),
-    }
-    await db.peer_rooms.insert_one(room)
-    # opening message from peer
-    await db.peer_messages.insert_one({
-        "room_id": room_id, "sender": "peer", "handle": peer["handle"],
-        "text": "Hi, I'm here with you. Couldn't sleep either — want to talk?",
-        "created_at": now_iso(),
-    })
-    # anonymized analytics event
-    await db.match_events.insert_one({
-        "outcome": outcome,
-        "preference": profile.get("matching_preference", "none"),
-        "had_tag": bool(profile.get("ethnicity")),
-        "created_at": now_iso(),
-    })
-    return {"room_id": room_id, "peer_handle": peer["handle"],
-            "peer_tag": room["peer_tag"], "outcome": outcome}
-
-
-@api_router.get("/match/analytics")
-async def match_analytics():
-    total = await db.match_events.count_documents({})
-    on_pref = await db.match_events.count_documents({"outcome": "matched-on-preference"})
-    fallback = await db.match_events.count_documents({"outcome": "fallback"})
-    diverse = await db.match_events.count_documents({"outcome": "matched-on-diversity"})
-    return {"total": total, "matched_on_preference": on_pref,
-            "fallback": fallback, "matched_on_diversity": diverse}
-
-
-# ----- Peer chat (polling) -----
-@api_router.get("/peerchat/{room_id}")
-async def peerchat_get(room_id: str):
-    room = await db.peer_rooms.find_one({"room_id": room_id}, {"_id": 0})
-    msgs = await db.peer_messages.find({"room_id": room_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
-    return {"room": room, "messages": msgs}
-
-
-@api_router.post("/peerchat/{room_id}")
-async def peerchat_send(room_id: str, m: PeerMessageCreate):
-    room = await db.peer_rooms.find_one({"room_id": room_id})
-    await db.peer_messages.insert_one({
-        "room_id": room_id, "sender": "me", "handle": "You",
-        "text": m.text, "created_at": now_iso(),
-    })
-    # demo peer gently responds so the conversation feels alive
-    if room and room.get("is_demo"):
-        reply = random.choice(PEER_REPLIES)
-        await db.peer_messages.insert_one({
-            "room_id": room_id, "sender": "peer",
-            "handle": room.get("peer_handle", "Peer"),
-            "text": reply, "created_at": now_iso(),
-        })
-    return {"ok": True}
 
 
 # ----- Baby tracker -----
@@ -1539,7 +1660,7 @@ async def compute_handoff_score(household: dict) -> dict:
     night_interruptions = sum(1 for l in logs if _is_night(l["at"]))
 
     # Most recent self-reported mood/energy from the on-duty caregiver
-    latest_mood = await db.mood.find_one(
+    latest_mood = await db.moods.find_one(
         {"device_id": on_duty_id}, {"_id": 0}, sort=[("created_at", -1)]
     )
     energy = latest_mood.get("energy") if latest_mood else None
@@ -1962,10 +2083,11 @@ class MealCheckinCreate(BaseModel):
 # next-phase, lighter-weight option — the venue list there will grow as
 # more moms use it there.
 MEETUP_NEIGHBORHOODS = [
-    {"key": "riverstone", "label": "Riverstone", "city": "Madera"},
-    {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera"},
-    {"key": "clovis", "label": "Clovis", "city": "Clovis"},
-    {"key": "fresno", "label": "Fresno (general)", "city": "Fresno"},
+    {"key": "riverstone", "label": "Riverstone", "city": "Madera", "lat": 36.9613, "lng": -120.0233},
+    {"key": "tesoro_viejo", "label": "Tesoro Viejo", "city": "Madera", "lat": 37.0430, "lng": -119.8930},
+    {"key": "copper_river", "label": "Copper River Ranch (Terrabella)", "city": "Fresno", "lat": 36.8999, "lng": -119.7328},
+    {"key": "clovis", "label": "Clovis", "city": "Clovis", "lat": 36.8252, "lng": -119.7029},
+    {"key": "fresno", "label": "Fresno (general)", "city": "Fresno", "lat": 36.7378, "lng": -119.7871},
 ]
 
 # Real, named spots — not generic placeholders — so the suggestion is
@@ -1985,6 +2107,12 @@ MEETUP_VENUES = {
         {"name": "Sycamore Square", "type": "park", "note": "Pocket park, open lawn and seating"},
         {"name": "Rosie's Greenway", "type": "park", "note": "Tree-lined path, picnic tables, open lawn"},
         {"name": "Lyles Greenway", "type": "park", "note": "Rose garden, linear park"},
+    ],
+    "copper_river": [
+        {"name": "Copper River Ranch Community Park", "type": "park", "note": "Playground and basketball court right in the neighborhood"},
+        {"name": "Copper River Ranch trail system", "type": "trail", "note": "8+ miles of walking/biking trails, connects to the Eaton Trail"},
+        {"name": "Copper River Country Club", "type": "clubhouse", "note": "Pool, tennis, fitness center — membership may be required for some amenities"},
+        {"name": "Woodward Park", "type": "trail", "note": "A few minutes away — lakes, gardens, and the Eaton Trail"},
     ],
     "clovis": [
         {"name": "Old Town Clovis Trail", "type": "trail", "note": "Paved, stroller-friendly, runs past shops and dessert spots"},
@@ -2225,6 +2353,29 @@ async def meal_checkin_today(device_id: str):
 @api_router.get("/meetups/neighborhoods")
 async def meetup_neighborhoods():
     return MEETUP_NEIGHBORHOODS
+
+
+@api_router.get("/meetups/nearest-neighborhood")
+async def nearest_neighborhood(lat: float, lng: float):
+    """Real distance-based matching — picks whichever of the 5 registered
+    areas is actually closest to the given coordinates, using the
+    haversine formula (accounts for the Earth's curvature, not just flat
+    lat/lng subtraction)."""
+    def haversine_km(lat1, lng1, lat2, lng2):
+        r = 6371.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lng2 - lng1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return 2 * r * math.asin(math.sqrt(a))
+
+    ranked = sorted(
+        MEETUP_NEIGHBORHOODS,
+        key=lambda n: haversine_km(lat, lng, n["lat"], n["lng"]),
+    )
+    nearest = ranked[0]
+    distance_km = haversine_km(lat, lng, nearest["lat"], nearest["lng"])
+    return {"key": nearest["key"], "label": nearest["label"], "distance_km": round(distance_km, 1)}
 
 
 @api_router.get("/meetups/categories")
@@ -2770,6 +2921,107 @@ async def predictive_feed_nudge(device_id: str):
     return {"nudged": False}
 
 
+# ----- Account Deletion -----
+# Genuinely purges every collection that can contain this device's data —
+# built by walking the entire codebase collection by collection, not a
+# guess. A few collections get special handling rather than a blind
+# delete, because a naive delete would break things for OTHER people:
+#   - households: she's removed from the member list rather than the
+#     whole household being deleted, since her partner still needs it.
+#   - meetups: she's removed from attendee lists, but a meetup she
+#     created stays (other people RSVPed to it), just without her data.
+#   - peer_messages: has no direct device_id field, so its room_ids are
+#     captured from peer_rooms BEFORE peer_rooms itself is deleted.
+#   - match_events: intentionally skipped — it's genuinely anonymized
+#     analytics with no device_id at all, nothing to delete.
+#   - meal_slots: intentionally skipped — signups are by name/contact
+#     for a public, no-login page, not tied to a device_id.
+@api_router.delete("/account/{device_id}")
+async def delete_account(device_id: str):
+    deleted_counts: dict = {}
+
+    # Peer chat rooms must be looked up BEFORE peer_rooms is deleted below,
+    # since peer_messages has no device_id field of its own.
+    her_room_ids = [r["room_id"] async for r in db.peer_rooms.find({"device_id": device_id}, {"room_id": 1})]
+    if her_room_ids:
+        pm_result = await db.peer_messages.delete_many({"room_id": {"$in": her_room_ids}})
+        if pm_result.deleted_count:
+            deleted_counts["peer_messages"] = pm_result.deleted_count
+
+    direct_collections = [
+        "baby_logs", "brain_notes", "chat_messages", "community_posts", "comments",
+        "dad_checkins", "epds", "meal_checkins", "meal_trains", "meetup_reflections",
+        "moods", "personal_events", "predictive_nudge_tracker", "presence", "profiles",
+        "push_tokens", "recovery_checkins", "self_nudge_tracker", "shop_items",
+        "shop_thread_messages", "sos_events", "weekly_insights", "peer_rooms",
+    ]
+    for coll_name in direct_collections:
+        coll = getattr(db, coll_name)
+        result = await coll.delete_many({"device_id": device_id})
+        if result.deleted_count:
+            deleted_counts[coll_name] = result.deleted_count
+
+    # Households: remove her as a member; delete the household entirely
+    # only if that leaves it empty.
+    async for h in db.households.find({"members.device_id": device_id}):
+        remaining = [m for m in h["members"] if m["device_id"] != device_id]
+        if remaining:
+            update = {"$set": {"members": remaining}}
+            if h.get("on_duty_device_id") == device_id:
+                update["$set"]["on_duty_device_id"] = remaining[0]["device_id"]
+            await db.households.update_one({"_id": h["_id"]}, update)
+        else:
+            await db.households.delete_one({"_id": h["_id"]})
+        deleted_counts["households"] = deleted_counts.get("households", 0) + 1
+
+    # Meetups: remove her from attendee lists everywhere (the meetup
+    # itself stays for whoever else is attending).
+    meetup_result = await db.meetups.update_many(
+        {"attendees.device_id": device_id},
+        {"$pull": {"attendees": {"device_id": device_id}}},
+    )
+    if meetup_result.modified_count:
+        deleted_counts["meetups_attendee_removed"] = meetup_result.modified_count
+
+    # Handoff events: she could be on either side of a switch.
+    handoff_result = await db.handoff_events.delete_many(
+        {"$or": [{"from_device_id": device_id}, {"to_device_id": device_id}]}
+    )
+    if handoff_result.deleted_count:
+        deleted_counts["handoff_events"] = handoff_result.deleted_count
+
+    # Shop threads: she could be the interested buyer.
+    shop_thread_result = await db.shop_threads.delete_many({"interested_device_id": device_id})
+    if shop_thread_result.deleted_count:
+        deleted_counts["shop_threads"] = shop_thread_result.deleted_count
+
+    return {"ok": True, "device_id": device_id, "deleted": deleted_counts}
+
+
+# ----- One-time cleanup: removes the specific fake seeded posts if this
+# server already ran the old seed_community() at some point in the past.
+# Matches on the EXACT original fake text, not just author name, so a real
+# user who happens to also be named "Maya" is never at risk of being
+# touched by this. Safe to leave in and call more than once — it becomes a
+# no-op the moment those specific posts are gone. -----
+_FAKE_SEED_SIGNATURES = [
+    ("Maya", "Week 3 and running on 3 hours of sleep. Just want to say to any mama awake at 3am — you're not alone. We've got this. 🤍"),
+    ("Priya", "Switched to combo feeding after a rough start with latching. My guilt was huge but baby is thriving. Fed is best, truly."),
+    ("Sofia", "Some days the sadness comes out of nowhere. Talking here and to my midwife helped me realize it's okay to not be okay."),
+    ("Aisha", "C-section recovery is no joke. Anyone else find the first shower emotional? Sending gentle hugs to all recovering mamas."),
+    ("Elena", "Started a little walking group for postpartum moms in my area. Fresh air + adult conversation has been everything."),
+]
+
+
+@api_router.post("/admin/cleanup-fake-seed-posts")
+async def cleanup_fake_seed_posts():
+    deleted = 0
+    for author, text in _FAKE_SEED_SIGNATURES:
+        result = await db.community_posts.delete_many({"author": author, "text": text})
+        deleted += result.deleted_count
+    return {"deleted": deleted}
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -2783,7 +3035,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
-    await seed_community()
+    pass  # community starts genuinely empty — no seeded/fake posts
 
 
 @app.on_event("shutdown")

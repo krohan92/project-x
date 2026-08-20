@@ -9,10 +9,12 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
@@ -20,6 +22,7 @@ import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { storage } from "@/src/utils/storage";
 
 const TIME_OPTIONS = ["9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM", "3:00 PM", "5:00 PM"];
 
@@ -108,6 +111,9 @@ export default function Meetups() {
   const [neighborhoods, setNeighborhoods] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [neighborhood, setNeighborhood] = useState("riverstone");
+  const [useLocation, setUseLocation] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [nearestLabel, setNearestLabel] = useState<string | null>(null);
   const [category, setCategory] = useState("all");
   const [meetups, setMeetups] = useState<any[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -138,6 +144,51 @@ export default function Meetups() {
   }, []);
 
   useFocusEffect(useCallback(() => { load(neighborhood, category); }, [neighborhood, category, load]));
+
+  // Restore whether she'd previously enabled location matching, and if so,
+  // re-locate on this visit too — this is what makes the toggle actually
+  // persist as "on" across app opens, not just for one session.
+  useFocusEffect(
+    useCallback(() => {
+      storage.getItem<string>("meetups_use_location", "").then((v) => {
+        const enabled = v === "true";
+        setUseLocation(enabled);
+        if (enabled) locateNearestNeighborhood();
+      });
+    }, [])
+  );
+
+  const locateNearestNeighborhood = async () => {
+    setLocating(true);
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm.granted) {
+        setUseLocation(false);
+        await storage.setItem("meetups_use_location", "false");
+        setLocating(false);
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+      const nearest = await api.nearestNeighborhood(pos.coords.latitude, pos.coords.longitude);
+      setNeighborhood(nearest.key);
+      setNearestLabel(nearest.label);
+      Haptics.selectionAsync();
+    } catch {
+      // Location unavailable — leave whatever neighborhood was already
+      // selected rather than blocking her from browsing at all.
+    }
+    setLocating(false);
+  };
+
+  const toggleUseLocation = async (next: boolean) => {
+    setUseLocation(next);
+    await storage.setItem("meetups_use_location", next ? "true" : "false");
+    if (next) {
+      await locateNearestNeighborhood();
+    } else {
+      setNearestLabel(null);
+    }
+  };
 
   const openCompose = async () => {
     setComposeOpen(true);
@@ -194,11 +245,33 @@ export default function Meetups() {
           Baby dates, mom dates, and get-togethers nearby
         </Txt>
 
+        <Pressable
+          testID="meetups-location-toggle"
+          onPress={() => toggleUseLocation(!useLocation)}
+          style={[styles.locationRow, useLocation && styles.locationRowActive]}
+        >
+          {locating ? (
+            <ActivityIndicator size="small" color={colors.brand} />
+          ) : (
+            <Feather name={useLocation ? "map-pin" : "map"} size={15} color={useLocation ? colors.brand : colors.muted} />
+          )}
+          <Txt style={{ color: useLocation ? colors.onSurface : colors.muted, fontSize: fontSize.sm, flex: 1 }}>
+            {useLocation
+              ? nearestLabel
+                ? `Showing meetups near you — closest is ${nearestLabel}`
+                : "Using your location"
+              : "Use my location to find nearby meetups"}
+          </Txt>
+          <Txt style={{ color: colors.brand, fontSize: fontSize.sm }} weight="500">
+            {useLocation ? "On" : "Off"}
+          </Txt>
+        </Pressable>
+
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
           {neighborhoods.map((n) => (
             <Pressable
               key={n.key}
-              onPress={() => { Haptics.selectionAsync(); setNeighborhood(n.key); }}
+              onPress={() => { Haptics.selectionAsync(); setNeighborhood(n.key); setUseLocation(false); storage.setItem("meetups_use_location", "false"); }}
               style={[styles.chip, neighborhood === n.key && styles.chipActive]}
             >
               <Txt style={{ color: neighborhood === n.key ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
@@ -383,6 +456,19 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: fontSize.xl },
   chipsRow: { gap: spacing.sm, paddingRight: spacing.lg, alignItems: "flex-start" },
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  locationRowActive: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary + "20" },
   chip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,

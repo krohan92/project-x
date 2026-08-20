@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, Linking } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Linking, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -11,13 +11,15 @@ import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
+import { storage } from "@/src/utils/storage";
 
 export default function Care() {
   const { tint: ambientTint } = useAmbient();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { profile } = useProfile();
+  const { profile, deviceId } = useProfile();
   const { t } = useT();
+  const [deleting, setDeleting] = useState(false);
 
   const [helplines, setHelplines] = useState<any[]>([]);
   const [pumps, setPumps] = useState<any[]>([]);
@@ -29,6 +31,50 @@ export default function Care() {
     profile?.matching_preference === "similar" && profile?.ethnicity
       ? profile.ethnicity
       : undefined;
+
+  const confirmDelete = () => {
+    Alert.alert(
+      "Delete all your data?",
+      "This permanently removes your profile, baby logs, mood history, posts, and messages from Cuddle. Your Tag Team partner will keep their own data, but you'll be removed from the household. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Continue", style: "destructive", onPress: finalConfirmDelete },
+      ]
+    );
+  };
+
+  const finalConfirmDelete = () => {
+    if (Alert.prompt) {
+      Alert.prompt(
+        "Type DELETE to confirm",
+        "This is the last step — it cannot be undone.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete everything", style: "destructive", onPress: (text?: string) => text === "DELETE" && doDelete() },
+        ],
+        "plain-text"
+      );
+    } else {
+      doDelete(); // Android has no Alert.prompt — the first confirm above is the safeguard there.
+    }
+  };
+
+  const doDelete = async () => {
+    if (!deviceId) return;
+    setDeleting(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    try {
+      await api.deleteAccount(deviceId);
+      await storage.removeItem("cuddle_device_id");
+      await storage.removeItem("app_lang");
+      await storage.removeItem("last_ambient_tint");
+      await storage.removeItem("meal_slot_tokens");
+      router.replace("/onboarding");
+    } catch {
+      Alert.alert("Something went wrong", "Couldn't delete your data just now — check your connection and try again.");
+    }
+    setDeleting(false);
+  };
 
   useEffect(() => {
     api.helplines().then(setHelplines).catch(() => {});
@@ -296,6 +342,17 @@ export default function Care() {
         <Pressable testID="care-privacy-link" onPress={() => router.push("/privacy")} style={{ alignItems: "center", marginTop: spacing.md }}>
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textDecorationLine: "underline" }}>
             Privacy Policy
+          </Txt>
+        </Pressable>
+
+        <Pressable
+          testID="care-delete-account"
+          onPress={confirmDelete}
+          disabled={deleting}
+          style={{ alignItems: "center", marginTop: spacing.lg, paddingVertical: spacing.sm }}
+        >
+          <Txt style={{ color: colors.error, fontSize: fontSize.sm }}>
+            {deleting ? "Deleting..." : "Delete My Data"}
           </Txt>
         </Pressable>
       </ScrollView>

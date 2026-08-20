@@ -22,7 +22,7 @@ import Animated, {
   cancelAnimation,
 } from "react-native-reanimated";
 
-import { Txt, Card, Button } from "@/src/components/ui";
+import { Txt, Card } from "@/src/components/ui";
 import { PresenceMap } from "@/src/components/PresenceMap";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { useAmbient } from "@/src/lib/ambient-context";
@@ -107,7 +107,6 @@ export default function Nearby() {
   const [anchor, setAnchor] = useState({ lat: 40.7128, lng: -74.006 });
   const [pins, setPins] = useState<any[]>([]);
   const [count, setCount] = useState(0);
-  const [matching, setMatching] = useState(false);
   const [permBlocked, setPermBlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<any>(null);
@@ -170,17 +169,6 @@ export default function Nearby() {
       await loadActive();
     } catch {}
     setBusy(false);
-  };
-
-  const findPeer = async () => {
-    if (!deviceId) return;
-    setMatching(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      const res = await api.matchRequest(deviceId);
-      router.push(`/peer/${res.room_id}?handle=${encodeURIComponent(res.peer_handle)}&outcome=${res.outcome}&tag=${encodeURIComponent(res.peer_tag || "")}`);
-    } catch {}
-    setMatching(false);
   };
 
   const pref = profile?.matching_preference || "none";
@@ -251,14 +239,10 @@ export default function Nearby() {
             </Txt>
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Pressable>
-          <Button
-            testID="find-peer-button"
-            label={matching ? t("nearby.finding") : t("nearby.findPeer")}
-            onPress={findPeer}
-            loading={matching}
-            icon={!matching ? <Feather name="message-circle" size={18} color={colors.onBrandPrimary} /> : undefined}
-            style={{ marginTop: spacing.md }}
-          />
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: spacing.sm, lineHeight: 18 }}>
+            This shapes what shows up for you in Care — like Community and Cultural Circles are where you
+            actually connect with other moms right now.
+          </Txt>
         </Card>
       </ScrollView>
     </View>

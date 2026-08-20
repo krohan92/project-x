@@ -29,6 +29,11 @@ export async function getDeviceId(): Promise<string> {
 async function req(path: string, options?: RequestInit) {
   const res = await fetch(`${API}${path}`, {
     headers: { "Content-Type": "application/json" },
+    // Every request in this app is either personal/live data or meant to
+    // feel fresh each time (like the daily quote) — never let the browser
+    // or OS silently serve a stale cached GET response instead of hitting
+    // the backend for real.
+    cache: "no-store",
     ...options,
   });
   if (!res.ok) {
@@ -110,13 +115,6 @@ export const api = {
   presenceToggle: (body: any) =>
     req(`/presence/toggle`, { method: "POST", body: JSON.stringify(body) }),
   presenceActive: (deviceId: string) => req(`/presence/active?device_id=${deviceId}`),
-
-  matchRequest: (deviceId: string) =>
-    req(`/match/request`, { method: "POST", body: JSON.stringify({ device_id: deviceId }) }),
-
-  peerChat: (roomId: string) => req(`/peerchat/${roomId}`),
-  peerSend: (roomId: string, body: any) =>
-    req(`/peerchat/${roomId}`, { method: "POST", body: JSON.stringify(body) }),
 
   babyLog: (body: any) =>
     req(`/baby-log`, { method: "POST", body: JSON.stringify(body) }),
@@ -259,4 +257,11 @@ export const api = {
   // ----- Postpartum Support Directory -----
   supportCategories: () => req(`/support-directory/categories`),
   supportProviders: (category?: string) => req(`/support-directory${category ? `?category=${category}` : ""}`),
+
+  // ----- Account -----
+  deleteAccount: (deviceId: string) => req(`/account/${deviceId}`, { method: "DELETE" }),
+
+  // ----- Location-based Meetup matching -----
+  nearestNeighborhood: (lat: number, lng: number) =>
+    req(`/meetups/nearest-neighborhood?lat=${lat}&lng=${lng}`),
 };

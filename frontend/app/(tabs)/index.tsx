@@ -7,7 +7,6 @@ import {
   RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -21,8 +20,17 @@ import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { isNightTime } from "@/src/lib/night";
 
-const HERO_BG =
-  "https://images.unsplash.com/photo-1772984711070-5c7e0d54026b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwyfHxzb2Z0JTIwd2F0ZXJjb2xvciUyMGFic3RyYWN0JTIwYmFja2dyb3VuZCUyMHdhcm0lMjBzdW5saWdodHxlbnwwfHx8fDE3ODI4NzI5OTh8MA&ixlib=rb-4.1.0&q=85";
+// A small set of original warm gradients — rotates together with the quote
+// so the whole card feels genuinely different each time, not just the text.
+// No external hotlinked image, so no licensing risk and no load delay.
+const HERO_GRADIENTS: [string, string, string][] = [
+  ["#E8B4A0", "#D68C7A", "#B5624E"], // coral sunrise
+  ["#C9A8D4", "#A985BD", "#7B5C96"], // dusky lavender
+  ["#F0C987", "#D9A05B", "#B5764A"], // golden hour
+  ["#9FC4C7", "#6FA3A8", "#4C6E8F"], // soft teal dusk
+  ["#E8A9BC", "#C97F8E", "#8F4E5E"], // rose warmth
+  ["#B8C99A", "#8FA876", "#5E7A4A"], // sage morning
+];
 
 const MOOD_GRADIENTS: [string, string][] = [
   ["#B9C4CE", "#98A6B3"],
@@ -65,6 +73,7 @@ export default function Home() {
   const { profile } = useProfile();
 
   const [quote, setQuote] = useState<{ text: string; author: string } | null>(null);
+  const [heroGradient, setHeroGradient] = useState(0);
   const [weeklyInsight, setWeeklyInsight] = useState<string | null>(null);
   const [tips, setTips] = useState<any[]>([]);
   const [todayMood, setTodayMood] = useState<any | null>(null);
@@ -94,6 +103,7 @@ export default function Home() {
         api.mealCheckinToday(profile.device_id),
       ]);
       setQuote(q);
+      setHeroGradient(Math.floor(Math.random() * HERO_GRADIENTS.length));
       setTips(t);
       setCheckedToday(mt.done);
       setTodayMood(mt.entry);
@@ -191,7 +201,12 @@ export default function Home() {
         ) : (
           <Animated.View entering={FadeInDown.duration(500)}>
             <View style={styles.hero} testID="daily-quote-card">
-              <Image source={HERO_BG} style={StyleSheet.absoluteFill} contentFit="cover" />
+              <LinearGradient
+                colors={HERO_GRADIENTS[heroGradient]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
               <LinearGradient
                 colors={["rgba(44,41,37,0.1)", "rgba(44,41,37,0.55)", "rgba(44,41,37,0.9)"]}
                 style={StyleSheet.absoluteFill}
