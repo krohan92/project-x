@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet, TextInput, Pressable, Share, Platform, Linking } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -141,6 +141,16 @@ export function HandoffCard() {
   }, [deviceId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Belt-and-suspenders fix for a real race condition: if this component's
+  // first render happens before the device ID has finished loading from
+  // storage, load() above returns early and loading never resolves —
+  // useFocusEffect alone doesn't reliably re-fire just because deviceId
+  // changed while the screen was already focused. This plain effect
+  // guarantees a retry the moment deviceId actually becomes available.
+  useEffect(() => {
+    if (deviceId) load();
+  }, [deviceId, load]);
 
   const create = async () => {
     if (!deviceId) return;

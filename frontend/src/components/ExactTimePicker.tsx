@@ -1,5 +1,4 @@
 import React from "react";
-import { Platform } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
 /**
@@ -18,7 +17,13 @@ export function ExactTimePicker({
     <DateTimePicker
       value={value}
       mode="time"
-      display={Platform.OS === "ios" ? "spinner" : "default"}
+      display="spinner"
+      // The app's own theme is always light, regardless of the phone's
+      // system Dark Mode setting — without this, iOS can render the
+      // picker's text for a dark background (near-white) while it's
+      // actually sitting on this app's light cream card, making it look
+      // washed out/illegible rather than genuinely "blurry."
+      themeVariant="light"
       onChange={(_, selected) => {
         if (selected) onChange(selected);
       }}

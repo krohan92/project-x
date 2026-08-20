@@ -110,7 +110,8 @@ export default function Meetups() {
 
   const [neighborhoods, setNeighborhoods] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [neighborhood, setNeighborhood] = useState("riverstone");
+  const [neighborhood, setNeighborhood] = useState("all");
+  const [composeNeighborhood, setComposeNeighborhood] = useState("riverstone");
   const [useLocation, setUseLocation] = useState(false);
   const [locating, setLocating] = useState(false);
   const [nearestLabel, setNearestLabel] = useState<string | null>(null);
@@ -168,7 +169,10 @@ export default function Meetups() {
         setLocating(false);
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+      // "Balanced" actually uses real GPS when available — "Low" was using
+      // cell-tower/WiFi positioning, which can be off by miles and was
+      // flipping which neighborhood counted as "nearest."
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const nearest = await api.nearestNeighborhood(pos.coords.latitude, pos.coords.longitude);
       setNeighborhood(nearest.key);
       setNearestLabel(nearest.label);
@@ -193,8 +197,12 @@ export default function Meetups() {
   const openCompose = async () => {
     setComposeOpen(true);
     setDateIso(nextWeekdayDates()[0]?.iso || "");
+    // A meetup has to belong to one real place — "All areas" is only a
+    // browsing filter, never a valid target for creating one.
+    const resolved = neighborhood !== "all" ? neighborhood : (neighborhoods[0]?.key || "riverstone");
+    setComposeNeighborhood(resolved);
     try {
-      const v = await api.meetupVenues(neighborhood);
+      const v = await api.meetupVenues(resolved);
       const sorted = sortVenuesForCategory(v, cat);
       setVenues(sorted);
       setVenueName(sorted[0]?.name || "");
@@ -219,7 +227,7 @@ export default function Meetups() {
         device_id: deviceId,
         title: title.trim(),
         category: cat,
-        neighborhood,
+        neighborhood: composeNeighborhood,
         venue_name: venueName === "__custom__" ? customVenue.trim() : venueName,
         date: dateIso,
         time_label: timeLabel,
@@ -268,6 +276,14 @@ export default function Meetups() {
         </Pressable>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+          <Pressable
+            onPress={() => { Haptics.selectionAsync(); setNeighborhood("all"); setUseLocation(false); storage.setItem("meetups_use_location", "false"); }}
+            style={[styles.chip, neighborhood === "all" && styles.chipActive]}
+          >
+            <Txt style={{ color: neighborhood === "all" ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+              All areas
+            </Txt>
+          </Pressable>
           {neighborhoods.map((n) => (
             <Pressable
               key={n.key}

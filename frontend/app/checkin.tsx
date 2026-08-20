@@ -12,7 +12,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import Animated, { FadeIn } from "react-native-reanimated";
 
 import { LinearGradient } from "expo-linear-gradient";
 
@@ -43,6 +42,7 @@ export default function Checkin() {
   const [mood, setMood] = useState<number | null>(null);
   const [energy, setEnergy] = useState<number | null>(null);
   const [sleep, setSleep] = useState<number | null>(null);
+  const [customSleep, setCustomSleep] = useState("");
   const [note, setNote] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -114,23 +114,26 @@ export default function Checkin() {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setMood(i + 1);
               }}
-              style={[styles.moodItem, mood === i + 1 && styles.moodSelected]}
+              style={styles.moodColumn}
             >
-              <LinearGradient
-                colors={grad}
-                style={[
-                  styles.moodBlob,
-                  { transform: [{ scale: MOOD_SCALES[i] }], opacity: mood === i + 1 ? 1 : 0.75 },
-                ]}
-              />
+              <View style={[styles.moodItem, mood === i + 1 && styles.moodSelected]}>
+                <LinearGradient
+                  colors={grad}
+                  style={[
+                    styles.moodBlob,
+                    { transform: [{ scale: MOOD_SCALES[i] }], opacity: mood === i + 1 ? 1 : 0.75 },
+                  ]}
+                />
+              </View>
+              <Txt
+                style={[styles.moodItemLabel, mood === i + 1 && { color: colors.brand }]}
+                weight={mood === i + 1 ? "500" : "400"}
+              >
+                {MOOD_LABELS[i]}
+              </Txt>
             </Pressable>
           ))}
         </View>
-        {mood != null && (
-          <Animated.View entering={FadeIn}>
-            <Txt display style={styles.moodLabel}>{MOOD_LABELS[mood - 1]}</Txt>
-          </Animated.View>
-        )}
 
         <Txt display style={styles.q}>Energy level</Txt>
         <View style={styles.scaleRow}>
@@ -158,14 +161,33 @@ export default function Checkin() {
               onPress={() => {
                 Haptics.selectionAsync();
                 setSleep(h);
+                setCustomSleep("");
               }}
-              style={[styles.chip, sleep === h && styles.chipActive]}
+              style={[styles.chip, !customSleep && sleep === h && styles.chipActive]}
             >
-              <Txt style={{ color: sleep === h ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+              <Txt style={{ color: !customSleep && sleep === h ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
                 {h === 8 ? "8+" : `~${h}`} hrs
               </Txt>
             </Pressable>
           ))}
+        </View>
+        <View style={styles.customSleepRow}>
+          <TextInput
+            testID="custom-sleep-input"
+            value={customSleep}
+            onChangeText={(txt) => {
+              setCustomSleep(txt);
+              const n = parseFloat(txt);
+              if (Number.isFinite(n) && n >= 0) setSleep(n);
+            }}
+            placeholder="Or enter any amount (e.g. 0.5, 1.5, 3)"
+            placeholderTextColor={colors.muted}
+            keyboardType="decimal-pad"
+            style={styles.customSleepInput}
+          />
+          {customSleep !== "" && (
+            <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>hrs</Txt>
+          )}
         </View>
 
         <Txt display style={styles.q}>{"What's present for you?"}</Txt>
@@ -218,7 +240,9 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   q: { fontSize: fontSize.xl, marginTop: spacing.xl, marginBottom: spacing.md },
-  moodRow: { flexDirection: "row", justifyContent: "space-between" },
+  moodRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  moodColumn: { alignItems: "center", flex: 1 },
+  moodItemLabel: { fontSize: 11, color: colors.muted, marginTop: 6, textAlign: "center" },
   moodItem: {
     width: 56,
     height: 56,
@@ -231,7 +255,6 @@ const styles = StyleSheet.create({
   },
   moodSelected: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary + "50" },
   moodBlob: { width: 30, height: 30, borderRadius: radius.pill },
-  moodLabel: { textAlign: "center", color: colors.brand, fontSize: fontSize.lg, marginTop: spacing.md },
   scaleRow: { flexDirection: "row", justifyContent: "space-between" },
   scaleDot: {
     width: 54,
@@ -245,6 +268,17 @@ const styles = StyleSheet.create({
   },
   scaleDotActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
   wrapRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  customSleepRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },
+  customSleepInput: {
+    flex: 1,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   chip: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
