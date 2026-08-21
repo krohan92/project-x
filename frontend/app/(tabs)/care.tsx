@@ -345,6 +345,12 @@ export default function Care() {
           </Txt>
         </Pressable>
 
+        <Pressable testID="care-support-link" onPress={() => router.push("/support")} style={{ alignItems: "center", marginTop: spacing.sm }}>
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textDecorationLine: "underline" }}>
+            Support
+          </Txt>
+        </Pressable>
+
         <Pressable
           testID="care-delete-account"
           onPress={confirmDelete}

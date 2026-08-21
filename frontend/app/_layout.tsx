@@ -100,6 +100,7 @@ export default function RootLayout() {
                 <Stack.Screen name="cuddle-calendar" />
                 <Stack.Screen name="support-directory" />
                 <Stack.Screen name="privacy" />
+                <Stack.Screen name="support" />
                 <Stack.Screen
                   name="yoga"
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}

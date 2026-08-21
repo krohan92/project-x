@@ -9,21 +9,21 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://project-x-production-60b7.up.railway.app",
-        "EXPO_PUBLIC_APP_URL": "https://project-x-rnmongoose.vercel.app"
+        "EXPO_PUBLIC_APP_URL": "https://project-x-flame-gamma.vercel.app"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://project-x-production-60b7.up.railway.app",
-        "EXPO_PUBLIC_APP_URL": "https://project-x-rnmongoose.vercel.app"
+        "EXPO_PUBLIC_APP_URL": "https://project-x-flame-gamma.vercel.app"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "https://project-x-production-60b7.up.railway.app",
-        "EXPO_PUBLIC_APP_URL": "https://project-x-rnmongoose.vercel.app"
+        "EXPO_PUBLIC_APP_URL": "https://project-x-flame-gamma.vercel.app"
       }
     }
   },
