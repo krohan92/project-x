@@ -1070,6 +1070,49 @@ class InterestCreate(BaseModel):
 # public health campaign — established, factual guidance, not our own
 # clinical judgment. Presented as an informational checklist, never a
 # diagnosis: this app is not a doctor.
+# Grounded in ACOG's current postpartum care guidance (contact within 3 weeks,
+# comprehensive visit by 12 weeks — Committee Opinion No. 736) and standard,
+# well-established lochia/baby-blues timing. General patterns only — her own
+# recovery can reasonably differ, which the copy says plainly.
+RECOVERY_TIMELINE = [
+    {
+        "max_day": 3,
+        "title": "The first few days",
+        "body": "Bleeding is usually at its heaviest now (bright red, called lochia rubra), and you may feel your uterus cramping as it starts to shrink back down. Some emotional ups and downs, even crying for no clear reason, are extremely common starting around now. This is often called the \"baby blues,\" and it's different from postpartum depression.",
+    },
+    {
+        "max_day": 7,
+        "title": "This week",
+        "body": "The baby blues often peak right around now, then start easing within a couple of weeks. Breast engorgement can also show up in the next day or two as milk comes in. Bleeding may still be fairly heavy but should be gradually easing.",
+    },
+    {
+        "max_day": 14,
+        "title": "Days 8 to 14",
+        "body": "Bleeding usually shifts from red to pink or brownish (lochia serosa) around now. If you had a C-section, the outer incision is often mostly closed by this point, though it keeps healing underneath for weeks. This is also a good window for that first check-in ACOG recommends having with your provider within the first 3 weeks, even a quick call.",
+    },
+    {
+        "max_day": 28,
+        "title": "Weeks 3 to 4",
+        "body": "Bleeding often tapers to a yellowish or white color and lightens further (lochia alba). If the baby blues haven't started easing by around 2 weeks, or if they're getting stronger instead of better, that's worth actually mentioning to your provider. It's the kind of thing an EPDS check-in on this app can help put into words too.",
+    },
+    {
+        "max_day": 42,
+        "title": "Weeks 5 to 6",
+        "body": "Many people reach a first real recovery milestone around now, though ACOG's current guidance is that your comprehensive postpartum visit can happen anytime up to 12 weeks, whenever actually makes sense for you. Ask your provider before resuming exercise or intercourse rather than assuming a fixed date applies.",
+    },
+    {
+        "max_day": 90,
+        "title": "Weeks 7 to 12",
+        "body": "This is the window ACOG recommends having your comprehensive postpartum visit by, if you haven't already. It should cover your physical recovery, mood, sleep, and more, not just a quick check. Physical healing is usually well underway, even if full strength and energy still take time.",
+    },
+    {
+        "max_day": 180,
+        "title": "Months 4 to 6",
+        "body": "Noticeable hair shedding is common right around now. It can be alarming to see, but it's a normal, temporary response to the hormonal shift after birth, not something wrong with you. Recovery at this stage is less about healing and more about rebuilding strength and stamina at your own pace.",
+    },
+]
+
+
 RECOVERY_WARNING_SIGNS = [
     {"key": "soaking_pad", "label": "Soaking through a pad every hour, or blood clots larger than an egg"},
     {"key": "incision_not_healing", "label": "An incision that isn't healing, or is red, swollen, or draining"},
@@ -1090,6 +1133,9 @@ class RecoveryCheckinCreate(BaseModel):
     bleeding_level: Optional[str] = None   # none / light / moderate / heavy
     incision_status: Optional[str] = None  # good / concerning / n/a
     symptoms: List[str] = []               # keys from RECOVERY_WARNING_SIGNS
+    lochia_color: Optional[str] = None     # red / pink_brown / yellow_white — a real, standard indicator of how recovery is progressing over the weeks
+    pelvic_floor_done: Optional[bool] = None  # did she do pelvic floor/kegel exercises today
+    diastasis_check: Optional[str] = None  # not_checked / no_gap / small_gap / large_gap — self-guided check result, not a diagnosis
     note: Optional[str] = None
 
 
@@ -1999,6 +2045,37 @@ async def recovery_warning_signs():
     return RECOVERY_WARNING_SIGNS
 
 
+@api_router.get("/recovery/timeline/{device_id}")
+async def recovery_timeline(device_id: str):
+    """What's typical right now, based on her actual delivery date — general
+    patterns, explicitly framed that way, never a promise about her specific
+    body."""
+    prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    delivery_date = prof.get("delivery_date") if prof else None
+    if not delivery_date:
+        return {"available": False}
+
+    try:
+        delivered = datetime.fromisoformat(delivery_date.replace("Z", "+00:00"))
+        if delivered.tzinfo is None:
+            delivered = delivered.replace(tzinfo=timezone.utc)
+    except (ValueError, AttributeError):
+        return {"available": False}
+
+    days = (datetime.now(timezone.utc) - delivered).days
+    if days < 0:
+        return {"available": False}  # delivery date hasn't happened yet
+
+    stage = next((s for s in RECOVERY_TIMELINE if days <= s["max_day"]), RECOVERY_TIMELINE[-1])
+    return {
+        "available": True,
+        "days_postpartum": days,
+        "title": stage["title"],
+        "body": stage["body"],
+        "beyond_tracked_range": days > RECOVERY_TIMELINE[-1]["max_day"],
+    }
+
+
 @api_router.post("/recovery/checkin")
 async def recovery_checkin(c: RecoveryCheckinCreate):
     doc = c.model_dump()
@@ -2048,6 +2125,58 @@ async def recovery_today(device_id: str):
     doc = await db.recovery_checkins.find_one(
         {"device_id": device_id, "created_at": {"$regex": f"^{today}"}}, {"_id": 0})
     return {"done": doc is not None, "entry": doc}
+
+
+@api_router.get("/recovery/{device_id}/report")
+async def recovery_report(device_id: str, days: int = 14):
+    """A plain-text summary of her recent recovery check-ins, meant to be
+    shared directly with her provider — real dates and self-reported
+    values only, never an interpretation or a diagnosis."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    checkins = await db.recovery_checkins.find(
+        {"device_id": device_id, "created_at": {"$gte": cutoff}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+
+    if not checkins:
+        return {"report_text": "No recovery check-ins logged in this period yet."}
+
+    prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    header_lines = [f"Postpartum Recovery Summary — last {days} days"]
+    if prof and prof.get("name"):
+        header_lines.append(f"For: {prof['name']}")
+    if prof and prof.get("delivery_date"):
+        header_lines.append(f"Delivery date: {prof['delivery_date']} ({prof.get('delivery_type', 'delivery type not set')})")
+    header_lines.append("Generated by Cuddle from self-reported daily check-ins. Not a diagnosis.")
+    header_lines.append("")
+
+    lochia_labels = {"red": "Red", "pink_brown": "Pink/brown", "yellow_white": "Yellow/white"}
+    diastasis_labels = {"no_gap": "No gap felt", "small_gap": "Small gap (~1-2 fingers)", "large_gap": "Larger gap (2+ fingers)", "not_checked": "Not checked"}
+
+    lines = list(header_lines)
+    for c in checkins:
+        date_str = c["created_at"][:10]
+        parts = [date_str]
+        if c.get("pain_level") is not None:
+            parts.append(f"pain {c['pain_level']}/5")
+        if c.get("bleeding_level"):
+            parts.append(f"bleeding: {c['bleeding_level']}")
+        if c.get("lochia_color"):
+            parts.append(f"lochia: {lochia_labels.get(c['lochia_color'], c['lochia_color'])}")
+        if c.get("incision_status") and c["incision_status"] != "n/a":
+            parts.append(f"incision: {c['incision_status']}")
+        if c.get("pelvic_floor_done") is not None:
+            parts.append(f"pelvic floor exercises: {'done' if c['pelvic_floor_done'] else 'not done'}")
+        if c.get("diastasis_check") and c["diastasis_check"] != "not_checked":
+            parts.append(f"diastasis check: {diastasis_labels.get(c['diastasis_check'], c['diastasis_check'])}")
+        if c.get("symptoms"):
+            symptom_labels = [w["label"] for w in RECOVERY_WARNING_SIGNS if w["key"] in c["symptoms"]]
+            if symptom_labels:
+                parts.append("FLAGGED: " + "; ".join(symptom_labels))
+        lines.append(" | ".join(parts))
+
+    lines.append("")
+    lines.append("Bring this list to your postpartum appointment, or share it with your provider directly.")
+    return {"report_text": "\n".join(lines)}
 
 
 @api_router.patch("/profile/appointment")
@@ -2361,28 +2490,6 @@ async def meal_checkin_today(device_id: str):
 async def meetup_neighborhoods():
     return MEETUP_NEIGHBORHOODS
 
-
-@api_router.get("/meetups/nearest-neighborhood")
-async def nearest_neighborhood(lat: float, lng: float):
-    """Real distance-based matching — picks whichever of the 5 registered
-    areas is actually closest to the given coordinates, using the
-    haversine formula (accounts for the Earth's curvature, not just flat
-    lat/lng subtraction)."""
-    def haversine_km(lat1, lng1, lat2, lng2):
-        r = 6371.0
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlambda = math.radians(lng2 - lng1)
-        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-        return 2 * r * math.asin(math.sqrt(a))
-
-    ranked = sorted(
-        MEETUP_NEIGHBORHOODS,
-        key=lambda n: haversine_km(lat, lng, n["lat"], n["lng"]),
-    )
-    nearest = ranked[0]
-    distance_km = haversine_km(lat, lng, nearest["lat"], nearest["lng"])
-    return {"key": nearest["key"], "label": nearest["label"], "distance_km": round(distance_km, 1)}
 
 
 @api_router.get("/meetups/categories")

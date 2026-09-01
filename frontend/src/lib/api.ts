@@ -171,6 +171,8 @@ export const api = {
   recoveryWarningSigns: () => req(`/recovery/warning-signs`),
   recoveryCheckin: (body: any) => req(`/recovery/checkin`, { method: "POST", body: JSON.stringify(body) }),
   recoveryCheckins: (deviceId: string) => req(`/recovery/checkins/${deviceId}`),
+  recoveryReport: (deviceId: string, days = 14) => req(`/recovery/${deviceId}/report?days=${days}`),
+  recoveryTimeline: (deviceId: string) => req(`/recovery/timeline/${deviceId}`),
   recoveryToday: (deviceId: string) => req(`/recovery/today/${deviceId}`),
   updateAppointment: (deviceId: string, done: boolean) =>
     req(`/profile/appointment`, { method: "PATCH", body: JSON.stringify({ device_id: deviceId, postpartum_appt_done: done }) }),
@@ -260,8 +262,4 @@ export const api = {
 
   // ----- Account -----
   deleteAccount: (deviceId: string) => req(`/account/${deviceId}`, { method: "DELETE" }),
-
-  // ----- Location-based Meetup matching -----
-  nearestNeighborhood: (lat: number, lng: number) =>
-    req(`/meetups/nearest-neighborhood?lat=${lat}&lng=${lng}`),
 };

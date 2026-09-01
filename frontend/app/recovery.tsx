@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable, TextInput } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, TextInput, Share } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -13,6 +13,16 @@ import { useProfile } from "@/src/lib/profile-context";
 
 const BLEEDING_OPTIONS = ["None", "Light", "Moderate", "Heavy"];
 const INCISION_OPTIONS = ["Good", "Concerning"];
+const LOCHIA_OPTIONS = [
+  { key: "red", label: "Red" },
+  { key: "pink_brown", label: "Pink / brown" },
+  { key: "yellow_white", label: "Yellow / white" },
+];
+const DIASTASIS_OPTIONS = [
+  { key: "no_gap", label: "No gap felt" },
+  { key: "small_gap", label: "Small gap" },
+  { key: "large_gap", label: "Larger gap" },
+];
 
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -29,13 +39,19 @@ export default function Recovery() {
 
   const [warningSigns, setWarningSigns] = useState<any[]>([]);
   const [recent, setRecent] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<any | null>(null);
   const [pain, setPain] = useState<number | null>(null);
   const [bleeding, setBleeding] = useState<string | null>(null);
   const [incision, setIncision] = useState<string | null>(null);
+  const [lochia, setLochia] = useState<string | null>(null);
+  const [pelvicFloor, setPelvicFloor] = useState<boolean | null>(null);
+  const [diastasis, setDiastasis] = useState<string | null>(null);
+  const [showDiastasisGuide, setShowDiastasisGuide] = useState(false);
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const isCSection = profile?.delivery_type === "c-section";
 
@@ -43,6 +59,7 @@ export default function Recovery() {
     api.recoveryWarningSigns().then(setWarningSigns).catch(() => {});
     if (deviceId) {
       api.recoveryCheckins(deviceId).then(setRecent).catch(() => {});
+      api.recoveryTimeline(deviceId).then(setTimeline).catch(() => {});
     }
   }, [deviceId]);
 
@@ -61,6 +78,9 @@ export default function Recovery() {
         pain_level: pain,
         bleeding_level: bleeding,
         incision_status: isCSection ? incision : null,
+        lochia_color: lochia,
+        pelvic_floor_done: pelvicFloor,
+        diastasis_check: diastasis,
         symptoms,
         note: note.trim() || null,
       });
@@ -73,6 +93,17 @@ export default function Recovery() {
   };
 
   const hasWarningSelected = symptoms.length > 0;
+
+  const shareReport = async () => {
+    if (!deviceId) return;
+    setSharing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const { report_text } = await api.recoveryReport(deviceId);
+      await Share.share({ message: report_text });
+    } catch {}
+    setSharing(false);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -89,6 +120,23 @@ export default function Recovery() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"], gap: spacing.lg }}>
+        {timeline?.available && (
+          <Card style={styles.timelineCard}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
+              <Feather name="calendar" size={16} color={colors.brand} />
+              <Txt style={{ color: colors.brand, fontSize: fontSize.sm }} weight="500">
+                Day {timeline.days_postpartum} postpartum · {timeline.title}
+              </Txt>
+            </View>
+            <Txt style={{ fontSize: fontSize.sm, lineHeight: 20, color: colors.onSurface }}>
+              {timeline.body}
+            </Txt>
+            <Txt style={{ fontSize: 11, color: colors.muted, marginTop: spacing.sm }}>
+              General patterns, not a promise about your specific recovery. Trust what your own body is telling you.
+            </Txt>
+          </Card>
+        )}
+
         <View>
           <Txt weight="500" style={styles.q}>Pain level today</Txt>
           <View style={styles.chipWrap}>
@@ -120,6 +168,25 @@ export default function Recovery() {
           </View>
         </View>
 
+        <View>
+          <Txt weight="500" style={styles.q}>Lochia color</Txt>
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginBottom: spacing.sm }}>
+            This naturally shifts over the weeks. A useful thing to track, not a cause for worry on its own.
+          </Txt>
+          <View style={styles.chipWrap}>
+            {LOCHIA_OPTIONS.map((o) => (
+              <Pressable
+                key={o.key}
+                testID={`lochia-${o.key}`}
+                onPress={() => { Haptics.selectionAsync(); setLochia(o.key); }}
+                style={[styles.chip, lochia === o.key && styles.chipActive]}
+              >
+                <Txt style={{ color: lochia === o.key ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>{o.label}</Txt>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         {isCSection && (
           <View>
             <Txt weight="500" style={styles.q}>Incision healing</Txt>
@@ -138,9 +205,57 @@ export default function Recovery() {
         )}
 
         <View>
+          <Txt weight="500" style={styles.q}>Pelvic floor exercises today?</Txt>
+          <View style={styles.chipWrap}>
+            {[{ v: true, l: "Yes" }, { v: false, l: "Not yet" }].map((o) => (
+              <Pressable
+                key={o.l}
+                onPress={() => { Haptics.selectionAsync(); setPelvicFloor(o.v); }}
+                style={[styles.chip, pelvicFloor === o.v && styles.chipActive]}
+              >
+                <Txt style={{ color: pelvicFloor === o.v ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>{o.l}</Txt>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Txt weight="500" style={styles.q}>Diastasis recti check</Txt>
+            <Pressable testID="diastasis-guide-toggle" onPress={() => setShowDiastasisGuide((s) => !s)} hitSlop={8}>
+              <Txt style={{ color: colors.brand, fontSize: fontSize.sm, textDecorationLine: "underline" }}>
+                {showDiastasisGuide ? "Hide how" : "How do I check?"}
+              </Txt>
+            </Pressable>
+          </View>
+          {showDiastasisGuide && (
+            <Card style={styles.guideCard}>
+              <Txt style={{ fontSize: fontSize.sm, lineHeight: 20, color: colors.onSurface }}>
+                Lie on your back, knees bent, feet flat. Lift just your head and shoulders slightly, like a small
+                crunch. Feel along the midline of your belly, above and below your belly button, for a gap between
+                the two sides of your abdominal muscles. This is a rough self-check, not a diagnosis. A pelvic
+                floor physical therapist can assess it properly.
+              </Txt>
+            </Card>
+          )}
+          <View style={[styles.chipWrap, { marginTop: spacing.sm }]}>
+            {DIASTASIS_OPTIONS.map((o) => (
+              <Pressable
+                key={o.key}
+                testID={`diastasis-${o.key}`}
+                onPress={() => { Haptics.selectionAsync(); setDiastasis(o.key); }}
+                style={[styles.chip, diastasis === o.key && styles.chipActive]}
+              >
+                <Txt style={{ color: diastasis === o.key ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>{o.label}</Txt>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View>
           <Txt weight="500" style={styles.q}>Any of these right now?</Txt>
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginBottom: spacing.sm }}>
-            Select any that apply — these are the well-established signs doctors ask about.
+            Select any that apply. These are the well-established signs doctors ask about.
           </Txt>
           <View style={{ gap: spacing.sm }}>
             {warningSigns.map((w) => {
@@ -167,7 +282,7 @@ export default function Recovery() {
               <Feather name="alert-triangle" size={20} color="#B23B3B" />
               <Txt style={{ color: "#7A2B2B", flex: 1, lineHeight: 20 }}>
                 If you're experiencing any of these right now, please contact your provider or go to
-                the ER — don't wait to hear back from this app. Trust what your body is telling you.
+                the ER. Don't wait to hear back from this app. Trust what your body is telling you.
               </Txt>
             </Card>
           </Animated.View>
@@ -183,11 +298,17 @@ export default function Recovery() {
         />
 
         <Button label="Save check-in" onPress={save} loading={saving} disabled={pain == null && !bleeding} />
-        {saved && <Txt style={{ color: colors.success, textAlign: "center" }}>Saved — thank you for checking in on yourself.</Txt>}
+        {saved && <Txt style={{ color: colors.success, textAlign: "center" }}>Saved. Thank you for checking in on yourself.</Txt>}
 
         {recent.length > 0 && (
           <View>
-            <Txt display style={{ fontSize: fontSize.lg, marginBottom: spacing.sm }}>Recent check-ins</Txt>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+              <Txt display style={{ fontSize: fontSize.lg }}>Recent check-ins</Txt>
+              <Pressable testID="share-recovery-report" onPress={shareReport} disabled={sharing} hitSlop={8} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Feather name="share" size={14} color={colors.brand} />
+                <Txt style={{ color: colors.brand, fontSize: fontSize.sm }}>{sharing ? "Preparing..." : "Share with provider"}</Txt>
+              </Pressable>
+            </View>
             {recent.slice(0, 5).map((r, i) => (
               <Card key={i} style={styles.recentRow}>
                 <Txt style={{ color: colors.muted, fontSize: fontSize.sm, width: 70 }}>{timeAgo(r.created_at)}</Txt>
@@ -257,6 +378,14 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     backgroundColor: "#F7E4E4",
     borderColor: "#E3B3B3",
+  },
+  guideCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  timelineCard: {
+    backgroundColor: colors.brandTertiary + "25",
+    borderColor: colors.brandTertiary,
   },
   noteInput: {
     minHeight: 80,
