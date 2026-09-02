@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
+        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -22,7 +23,10 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.cuddle.postpartum",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -43,6 +47,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a41e462b-7569-4e74-a42d-4a095b805102"
+      }
     }
   }
 }
