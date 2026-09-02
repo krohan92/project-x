@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import json
+import asyncio
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, BeforeValidator, EmailStr
@@ -36,6 +37,7 @@ anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHRO
 
 # ----- Auth -----
 JWT_SECRET = os.environ.get('JWT_SECRET')  # REQUIRED in production — see .env.example
+ADMIN_BROADCAST_KEY = os.environ.get('ADMIN_BROADCAST_KEY')  # required to send an announcement push to every user
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 90
 APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
@@ -689,7 +691,7 @@ CHAT_TOOLS = [
     },
     {
         "name": "log_sleep",
-        "description": "Log a completed nap. Use when she mentions the baby slept or napped for some length of time.",
+        "description": "Log a completed nap. Use when she mentions the baby slept or napped for some length of time in the past.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -698,6 +700,26 @@ CHAT_TOOLS = [
             },
             "required": ["duration_minutes"],
         },
+    },
+    {
+        "name": "start_baby_sleep",
+        "description": "Start a live timer for the baby's sleep, right now. Use for phrases like 'baby's going to sleep', 'baby's asleep', 'putting baby down', or 'baby is going down for a nap' — anything indicating the baby is falling asleep RIGHT NOW, not describing a nap that already happened.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "stop_baby_sleep",
+        "description": "Stop the baby's live sleep timer because the baby just woke up. Use for phrases like 'baby's awake', 'baby woke up', or 'baby's up now'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "start_self_rest",
+        "description": "Start a live timer for HER OWN rest (not the baby's), right now. Use for phrases like 'I'm going to bed', 'mama's going to sleep', 'I'm going to lie down', or 'going to rest now' — when she herself, the caregiver, is about to sleep or rest.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "stop_self_rest",
+        "description": "Stop her own rest timer because she just got up. Use for phrases like 'I'm up', 'I'm awake now', or 'just woke up' referring to herself, not the baby.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "tag_team_switch",
@@ -745,6 +767,28 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
             "at": at, "logged_at": now_iso(),
         })
         return f"Logged: {dur} minute nap."
+
+    if name == "start_baby_sleep":
+        await _start_sleep_session(device_id, "baby")
+        return "Started a live timer for baby's sleep."
+
+    if name == "stop_baby_sleep":
+        result = await _stop_sleep_session(device_id, "baby")
+        if result is None:
+            return "There wasn't a sleep timer running for the baby right now."
+        mins = result['duration_minutes']
+        return f"Logged: baby slept for {mins} minute{'s' if mins != 1 else ''}."
+
+    if name == "start_self_rest":
+        await _start_sleep_session(device_id, "self")
+        return "Started a rest timer for her. Her partner will see she's resting, if they're on Tag Team together."
+
+    if name == "stop_self_rest":
+        result = await _stop_sleep_session(device_id, "self")
+        if result is None:
+            return "There wasn't a rest timer running for her right now."
+        mins = result['duration_minutes']
+        return f"Logged: she rested for {mins} minute{'s' if mins != 1 else ''}."
 
     if name == "tag_team_switch":
         h = await db.households.find_one({"members.device_id": device_id})
@@ -985,6 +1029,16 @@ class PresenceToggle(BaseModel):
     awake: bool
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+class SleepSessionStart(BaseModel):
+    device_id: str
+    subject: str   # "baby" or "self" (the caregiver going to rest themselves)
+
+
+class SleepSessionStop(BaseModel):
+    device_id: str
+    subject: str
 
 
 class BabyLogCreate(BaseModel):
@@ -1366,9 +1420,118 @@ async def baby_log(b: BabyLogCreate):
     return doc
 
 
+async def _start_sleep_session(device_id: str, subject: str) -> dict:
+    """Core logic shared by the REST endpoint and the Talk to Cuddle voice
+    tools, so 'baby's going to sleep' said out loud behaves identically to
+    tapping the Start button."""
+    await db.active_sleep_sessions.delete_many({"owner_device_id": device_id, "subject": subject})
+    doc = {"owner_device_id": device_id, "subject": subject, "started_at": now_iso()}
+    await db.active_sleep_sessions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _stop_sleep_session(device_id: str, subject: str) -> Optional[dict]:
+    """Core logic shared by the REST endpoint and the voice tools. Returns
+    None if there was nothing active to stop (e.g. she says 'baby's awake'
+    but no timer was actually running)."""
+    if subject == "baby":
+        device_ids = await _household_device_ids(device_id)
+        active = await db.active_sleep_sessions.find_one(
+            {"owner_device_id": {"$in": device_ids}, "subject": "baby"}, {"_id": 0}
+        )
+    else:
+        active = await db.active_sleep_sessions.find_one(
+            {"owner_device_id": device_id, "subject": "self"}, {"_id": 0}
+        )
+    if not active:
+        return None
+
+    started = datetime.fromisoformat(active["started_at"])
+    duration_minutes = max(1, round((datetime.now(timezone.utc) - started).total_seconds() / 60))
+    await db.active_sleep_sessions.delete_many(
+        {"owner_device_id": active["owner_device_id"], "subject": subject}
+    )
+
+    if subject == "baby":
+        await db.baby_logs.insert_one({
+            "device_id": active["owner_device_id"], "kind": "sleep", "detail": None,
+            "amount_ml": None, "diaper_type": None, "duration_minutes": duration_minutes,
+            "at": active["started_at"], "logged_at": now_iso(),
+        })
+    else:
+        await db.caregiver_rest_logs.insert_one({
+            "device_id": active["owner_device_id"], "duration_minutes": duration_minutes,
+            "at": active["started_at"], "logged_at": now_iso(),
+        })
+    return {"duration_minutes": duration_minutes, "started_at": active["started_at"]}
+
+
+@api_router.post("/sleep-session/start")
+async def sleep_session_start(s: SleepSessionStart):
+    """Live start/stop timing, more accurate than guessing a duration after
+    the fact. 'self' sessions (a caregiver resting, not the baby) are what
+    make this genuinely different from a typical baby-only tracker: the
+    other caregiver in the household can see it happening in real time."""
+    return await _start_sleep_session(s.device_id, s.subject)
+
+
+@api_router.get("/sleep-session/active/{device_id}")
+async def sleep_session_active(device_id: str):
+    """Everything currently in progress that this household can see: baby's
+    nap if anyone started one, and any caregiver's own rest session too."""
+    device_ids = await _household_device_ids(device_id)
+    sessions = await db.active_sleep_sessions.find(
+        {"owner_device_id": {"$in": device_ids}}, {"_id": 0}
+    ).to_list(10)
+
+    # Attach whose session it is, for "self" sessions specifically, so the
+    # UI can show a real name ("Mom is resting") instead of just a role key.
+    h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    member_lookup = {m["device_id"]: m for m in (h["members"] if h else [])}
+    for sess in sessions:
+        member = member_lookup.get(sess["owner_device_id"])
+        sess["owner_name"] = member.get("name") if member else None
+        sess["is_you"] = sess["owner_device_id"] == device_id
+    return sessions
+
+
+@api_router.post("/sleep-session/stop")
+async def sleep_session_stop(s: SleepSessionStop):
+    """Baby sessions can be stopped by any caregiver in the household (the
+    one who notices baby waking up isn't always the one who started the
+    nap timer). A caregiver's own 'self' rest session can only be stopped
+    by that same device, since nobody else should end someone else's rest
+    for them."""
+    result = await _stop_sleep_session(s.device_id, s.subject)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No active session found")
+    return result
+
+
 @api_router.get("/baby-log/{device_id}")
 async def baby_logs(device_id: str, limit: int = 50):
-    docs = await db.baby_logs.find({"device_id": device_id}, {"_id": 0}).sort("at", -1).to_list(limit)
+    # Combined across the whole household, same as /summary and
+    # /predictions already do — otherwise Dad's feed wouldn't show up in
+    # Mom's recent activity list, even though the totals above it would
+    # silently already include it. That mismatch is exactly what defeats
+    # the point of Tag Team: seeing what your partner actually logged.
+    device_ids = await _household_device_ids(device_id)
+    docs = await db.baby_logs.find({"device_id": {"$in": device_ids}}, {"_id": 0}).sort("at", -1).to_list(limit)
+
+    # Attach who actually logged each entry (by name/role) whenever this
+    # device is part of a real household — otherwise a shared list with no
+    # attribution just raises the question "wait, who did this?"
+    if len(device_ids) > 1:
+        h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+        member_lookup = {m["device_id"]: m for m in (h["members"] if h else [])}
+        for d in docs:
+            member = member_lookup.get(d.get("device_id"))
+            if member:
+                d["logged_by_name"] = member.get("name")
+                d["logged_by_role"] = member.get("role")
+                d["logged_by_you"] = d["device_id"] == device_id
+
     return docs
 
 
@@ -1404,6 +1567,21 @@ async def baby_log_summary(device_id: str):
     poop_count = sum(1 for l in diaper_logs if l.get("diaper_type") in ("poop", "both"))
     sleep_minutes = sum(l.get("duration_minutes") or 0 for l in sleep_logs)
 
+    # "When did the baby last eat/pee/poop/sleep" — genuinely one of the
+    # most-wanted things a tired parent wants to know at a glance, so this
+    # looks beyond just today (not date-filtered) to avoid going blank
+    # first thing in the morning before anything's been logged yet today.
+    async def _last_at(match: dict) -> Optional[str]:
+        doc = await db.baby_logs.find_one(
+            {"device_id": {"$in": device_ids}, **match}, {"_id": 0, "at": 1}, sort=[("at", -1)]
+        )
+        return doc["at"] if doc else None
+
+    last_feed_at = await _last_at({"kind": "feed"})
+    last_pee_at = await _last_at({"kind": "diaper", "diaper_type": {"$in": ["pee", "both"]}})
+    last_poop_at = await _last_at({"kind": "diaper", "diaper_type": {"$in": ["poop", "both"]}})
+    last_sleep_at = await _last_at({"kind": "sleep"})
+
     return {
         "date": today,
         "feed_count": len(feed_logs),
@@ -1413,6 +1591,10 @@ async def baby_log_summary(device_id: str):
         "poop_count": poop_count,
         "sleep_count": len(sleep_logs),
         "sleep_total_minutes": sleep_minutes,
+        "last_feed_at": last_feed_at,
+        "last_pee_at": last_pee_at,
+        "last_poop_at": last_poop_at,
+        "last_sleep_at": last_sleep_at,
     }
 
 
@@ -1430,6 +1612,27 @@ def _age_based_feed_interval_minutes(age_weeks: Optional[float]) -> Optional[int
     if age_weeks < 26:
         return 240   # ~4h, 3-6 months
     return 270       # ~4.5h, 6+ months
+
+
+def _age_based_wake_window_minutes(age_weeks: Optional[float]) -> Optional[int]:
+    """General 'wake window' norms (how long a baby can comfortably stay
+    awake between sleeps) from widely-cited pediatric sleep guidance.
+    Same role as the feed-interval fallback above: a starting estimate
+    only, replaced by this baby's own pattern as soon as there's enough
+    of it logged."""
+    if age_weeks is None:
+        return None
+    if age_weeks < 4:
+        return 45    # 0-4 weeks: ~30-60min
+    if age_weeks < 13:
+        return 75    # 4-12 weeks: ~60-90min
+    if age_weeks < 18:
+        return 100   # 3-4 months: ~75-120min
+    if age_weeks < 31:
+        return 150   # 5-7 months: ~2-3h
+    if age_weeks < 44:
+        return 180   # 7-10 months: ~2.5-3.5h
+    return 210        # 11+ months: ~3-4h
 
 
 def _predict_next(logs: List[dict], min_samples: int = 2, max_samples: int = 6, age_fallback_minutes: Optional[int] = None) -> Optional[dict]:
@@ -1466,6 +1669,54 @@ def _predict_next(logs: List[dict], min_samples: int = 2, max_samples: int = 6, 
     }
 
 
+def _predict_next_sleep(logs: List[dict], min_samples: int = 3, max_samples: int = 6, age_fallback_minutes: Optional[int] = None) -> Optional[dict]:
+    """Predicts when the next sleep is likely to start, based on this
+    baby's own recent 'wake windows': the gap from when they actually
+    WOKE UP (not when they fell asleep) to when they next fell asleep.
+    Using consecutive sleep start times instead would overestimate the
+    wake window by however long each nap actually lasted, since that
+    time isn't part of being awake at all."""
+    dated = [l for l in logs if l.get("at")]
+    dated.sort(key=lambda l: l["at"])
+    wake_windows = []
+    for i in range(len(dated) - 1):
+        prev, nxt = dated[i], dated[i + 1]
+        prev_start = datetime.fromisoformat(prev["at"])
+        prev_duration = prev.get("duration_minutes") or 0
+        prev_end = prev_start + timedelta(minutes=prev_duration)
+        next_start = datetime.fromisoformat(nxt["at"])
+        gap_minutes = (next_start - prev_end).total_seconds() / 60
+        if gap_minutes > 0:  # skip overlapping/backdated entries that don't form a clean gap
+            wake_windows.append(gap_minutes)
+
+    if len(wake_windows) < min_samples:
+        if age_fallback_minutes and dated:
+            last = dated[-1]
+            last_start = datetime.fromisoformat(last["at"])
+            last_end = last_start + timedelta(minutes=last.get("duration_minutes") or 0)
+            predicted = last_end + timedelta(minutes=age_fallback_minutes)
+            return {
+                "predicted_at": predicted.isoformat(),
+                "avg_interval_minutes": age_fallback_minutes,
+                "confidence": "age_estimate",
+                "sample_size": len(wake_windows),
+            }
+        return None
+
+    recent = wake_windows[-max_samples:]
+    avg_minutes = sum(recent) / len(recent)
+    last = dated[-1]
+    last_end = datetime.fromisoformat(last["at"]) + timedelta(minutes=last.get("duration_minutes") or 0)
+    predicted = last_end + timedelta(minutes=avg_minutes)
+    confidence = "steady" if len(recent) >= 5 else ("developing" if len(recent) >= 3 else "early")
+    return {
+        "predicted_at": predicted.isoformat(),
+        "avg_interval_minutes": round(avg_minutes),
+        "confidence": confidence,
+        "sample_size": len(recent),
+    }
+
+
 @api_router.get("/baby-log/{device_id}/predictions")
 async def baby_log_predictions(device_id: str):
     """'Based on your own recent logs, here's roughly when to expect the
@@ -1481,6 +1732,7 @@ async def baby_log_predictions(device_id: str):
     feed_logs = [l for l in logs if l["kind"] == "feed"]
     pee_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("pee", "both")]
     poop_logs = [l for l in logs if l["kind"] == "diaper" and l.get("diaper_type") in ("poop", "both")]
+    sleep_logs = [l for l in logs if l["kind"] == "sleep"]
 
     age_weeks = None
     prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
@@ -1499,6 +1751,7 @@ async def baby_log_predictions(device_id: str):
         "feed": _predict_next(feed_logs, age_fallback_minutes=_age_based_feed_interval_minutes(age_weeks)),
         "pee": _predict_next(pee_logs, min_samples=3),
         "poop": _predict_next(poop_logs, min_samples=2, max_samples=4),
+        "sleep": _predict_next_sleep(sleep_logs, age_fallback_minutes=_age_based_wake_window_minutes(age_weeks)),
     }
 
 
@@ -1620,6 +1873,59 @@ async def register_push_token(p: PushRegister):
         upsert=True,
     )
     return {"ok": True}
+
+
+class BroadcastAnnouncement(BaseModel):
+    title: str
+    body: str
+    admin_key: str
+
+
+@api_router.post("/admin/broadcast-announcement")
+async def broadcast_announcement(a: BroadcastAnnouncement):
+    """Sends a push to every registered device — for real app-wide news
+    (a genuinely new feature, a real incident), not routine use. Protected
+    by a key that only exists as a Railway environment variable, since an
+    unprotected version of this could spam every single user. Also rate
+    limited on both sides: wrong-key attempts (to make the key genuinely
+    hard to brute-force by guessing) and successful sends (as a safety
+    net if the key is ever leaked or misused, intentionally or not)."""
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat()
+    day_ago = (now - timedelta(hours=24)).isoformat()
+
+    recent_failures = await db.broadcast_attempts.count_documents(
+        {"outcome": "failed", "at": {"$gte": hour_ago}}
+    )
+    if recent_failures >= 5:
+        raise HTTPException(status_code=429, detail="Too many failed attempts recently, try again later")
+
+    if not ADMIN_BROADCAST_KEY or not _secrets.compare_digest(a.admin_key, ADMIN_BROADCAST_KEY):
+        await db.broadcast_attempts.insert_one({"outcome": "failed", "at": now.isoformat()})
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    recent_sends = await db.broadcast_attempts.count_documents(
+        {"outcome": "sent", "at": {"$gte": day_ago}}
+    )
+    if recent_sends >= 3:
+        raise HTTPException(status_code=429, detail="Daily broadcast limit reached (3/day) — a real safeguard, raise it in code if you genuinely need more")
+
+    tokens = await db.push_tokens.find({}, {"_id": 0, "device_id": 1}).to_list(100000)
+    device_ids = [t["device_id"] for t in tokens]
+
+    # Send in small concurrent batches rather than one at a time (slow) or
+    # all at once (could overwhelm Expo's push endpoint at real scale).
+    # Note: send_push already catches its own errors internally, so this
+    # can only report how many were attempted, not confirmed-delivered —
+    # genuine delivery confirmation needs a separate Expo receipt check,
+    # out of scope for a simple announcement tool.
+    batch_size = 25
+    for i in range(0, len(device_ids), batch_size):
+        batch = device_ids[i:i + batch_size]
+        await asyncio.gather(*[send_push(did, a.title, a.body) for did in batch], return_exceptions=True)
+
+    await db.broadcast_attempts.insert_one({"outcome": "sent", "at": now.isoformat(), "title": a.title})
+    return {"attempted": len(device_ids)}
 
 
 def _make_household_code() -> str:
@@ -2488,7 +2794,20 @@ async def meal_checkin_today(device_id: str):
 # ----- Neighborhood Meetups -----
 @api_router.get("/meetups/neighborhoods")
 async def meetup_neighborhoods():
-    return MEETUP_NEIGHBORHOODS
+    # Start with the 5 hand-curated areas (real, verified venues), then add
+    # any other area names people have actually used when creating a
+    # meetup — this is how the app grows beyond the initial test region
+    # without needing a paid places API. No curated venues for these, but
+    # they're real and browsable.
+    known_keys = {n["key"] for n in MEETUP_NEIGHBORHOODS}
+    custom_keys = await db.meetups.distinct("neighborhood")
+    custom = [
+        {"key": k, "label": k, "city": None, "custom": True}
+        for k in custom_keys
+        if k and k not in known_keys and k != "all"
+    ]
+    custom.sort(key=lambda n: n["label"])
+    return MEETUP_NEIGHBORHOODS + custom
 
 
 
@@ -3035,6 +3354,108 @@ async def predictive_feed_nudge(device_id: str):
     return {"nudged": False}
 
 
+@api_router.get("/baby-log/{device_id}/predictive-sleep-nudge")
+async def predictive_sleep_nudge(device_id: str):
+    """Same idea as the feed nudge, for naps: a heads-up shortly before baby
+    is likely to wake, or likely to be ready to go down. Uses a separate
+    tracker collection so it never interferes with the feed nudge's own
+    once-per-prediction logic."""
+    now = datetime.now(timezone.utc)
+
+    # If baby's actually asleep right now (a live session is running), the
+    # "next sleep" prediction doesn't apply — what matters is roughly when
+    # they'll wake, which the average nap length can estimate honestly.
+    device_ids = await _household_device_ids(device_id)
+    active_baby_session = await db.active_sleep_sessions.find_one(
+        {"owner_device_id": {"$in": device_ids}, "subject": "baby"}
+    )
+    if active_baby_session:
+        recent_sleep_logs = await db.baby_logs.find(
+            {"device_id": {"$in": device_ids}, "kind": "sleep",
+             "duration_minutes": {"$ne": None}},
+        ).sort("at", -1).to_list(6)
+        if len(recent_sleep_logs) < 2:
+            return {"nudged": False}  # not enough history to estimate a typical nap length yet
+        avg_nap_minutes = sum(l["duration_minutes"] for l in recent_sleep_logs) / len(recent_sleep_logs)
+        started = datetime.fromisoformat(active_baby_session["started_at"])
+        predicted_wake = started + timedelta(minutes=avg_nap_minutes)
+        tracker_key = f"wake:{active_baby_session['started_at']}"
+        tracker = await db.predictive_sleep_nudge_tracker.find_one({"device_id": device_id})
+        if tracker and tracker.get("last_nudged") == tracker_key:
+            return {"nudged": False}
+        minutes_until = (predicted_wake - now).total_seconds() / 60
+        if 5 <= minutes_until <= 15:
+            await send_push(
+                device_id, "Cuddle · Heads up",
+                "Based on typical nap length, baby might be waking up in the next little while.",
+            )
+            await db.predictive_sleep_nudge_tracker.update_one(
+                {"device_id": device_id}, {"$set": {"last_nudged": tracker_key}}, upsert=True,
+            )
+            return {"nudged": True}
+        return {"nudged": False}
+
+    # Otherwise, use the real wake-window prediction for when baby's likely
+    # to be ready to go down next.
+    predictions = await baby_log_predictions(device_id)
+    sleep_pred = predictions.get("sleep")
+    if not sleep_pred or sleep_pred["confidence"] not in ("developing", "steady", "age_estimate"):
+        return {"nudged": False}
+
+    predicted_at = sleep_pred["predicted_at"]
+    tracker_key = f"nap:{predicted_at}"
+    tracker = await db.predictive_sleep_nudge_tracker.find_one({"device_id": device_id})
+    if tracker and tracker.get("last_nudged") == tracker_key:
+        return {"nudged": False}
+
+    predicted_dt = datetime.fromisoformat(predicted_at)
+    minutes_until = (predicted_dt - now).total_seconds() / 60
+    if 5 <= minutes_until <= 15:
+        basis = "usual pattern" if sleep_pred["confidence"] != "age_estimate" else "typical timing for this age"
+        await send_push(
+            device_id, "Cuddle · Heads up",
+            f"Baby's next nap window is probably coming up soon, based on {basis}.",
+        )
+        await db.predictive_sleep_nudge_tracker.update_one(
+            {"device_id": device_id}, {"$set": {"last_nudged": tracker_key}}, upsert=True,
+        )
+        return {"nudged": True}
+    return {"nudged": False}
+
+
+@api_router.get("/baby-log/{device_id}/predictive-poop-nudge")
+async def predictive_poop_nudge(device_id: str):
+    """Same pattern as the feed and sleep nudges. Worth being honest that
+    poop timing is inherently less precise than feed or sleep (fewer
+    logged samples to learn from, more day-to-day variance), so this
+    leans on the gentler 'might be due' framing rather than a confident
+    prediction."""
+    now = datetime.now(timezone.utc)
+
+    predictions = await baby_log_predictions(device_id)
+    poop_pred = predictions.get("poop")
+    if not poop_pred or poop_pred["confidence"] not in ("developing", "steady"):
+        return {"nudged": False}  # age-based fallback doesn't really apply to poop timing
+
+    predicted_at = poop_pred["predicted_at"]
+    tracker = await db.predictive_poop_nudge_tracker.find_one({"device_id": device_id})
+    if tracker and tracker.get("last_nudged") == predicted_at:
+        return {"nudged": False}
+
+    predicted_dt = datetime.fromisoformat(predicted_at)
+    minutes_until = (predicted_dt - now).total_seconds() / 60
+    if 5 <= minutes_until <= 15:
+        await send_push(
+            device_id, "Cuddle · Heads up",
+            "Might be due for a diaper check soon, based on the usual pattern.",
+        )
+        await db.predictive_poop_nudge_tracker.update_one(
+            {"device_id": device_id}, {"$set": {"last_nudged": predicted_at}}, upsert=True,
+        )
+        return {"nudged": True}
+    return {"nudged": False}
+
+
 # ----- Account Deletion -----
 # Genuinely purges every collection that can contain this device's data —
 # built by walking the entire codebase collection by collection, not a
@@ -3068,12 +3489,20 @@ async def delete_account(device_id: str):
         "moods", "personal_events", "predictive_nudge_tracker", "presence", "profiles",
         "push_tokens", "recovery_checkins", "self_nudge_tracker", "shop_items",
         "shop_thread_messages", "sos_events", "weekly_insights", "peer_rooms",
+        "caregiver_rest_logs", "predictive_sleep_nudge_tracker", "predictive_poop_nudge_tracker",
     ]
     for coll_name in direct_collections:
         coll = getattr(db, coll_name)
         result = await coll.delete_many({"device_id": device_id})
         if result.deleted_count:
             deleted_counts[coll_name] = result.deleted_count
+
+    # active_sleep_sessions uses owner_device_id, not device_id — caught by
+    # actually running account deletion end-to-end against a live baby or
+    # self sleep timer rather than just checking the collection list by eye.
+    session_result = await db.active_sleep_sessions.delete_many({"owner_device_id": device_id})
+    if session_result.deleted_count:
+        deleted_counts["active_sleep_sessions"] = session_result.deleted_count
 
     # Households: remove her as a member; delete the household entirely
     # only if that leaves it empty.

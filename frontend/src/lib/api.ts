@@ -120,6 +120,11 @@ export const api = {
     req(`/baby-log`, { method: "POST", body: JSON.stringify(body) }),
   babyLogs: (deviceId: string) => req(`/baby-log/${deviceId}`),
   babyLogSummary: (deviceId: string) => req(`/baby-log/${deviceId}/summary`),
+  sleepSessionStart: (deviceId: string, subject: "baby" | "self") =>
+    req(`/sleep-session/start`, { method: "POST", body: JSON.stringify({ device_id: deviceId, subject }) }),
+  sleepSessionStop: (deviceId: string, subject: "baby" | "self") =>
+    req(`/sleep-session/stop`, { method: "POST", body: JSON.stringify({ device_id: deviceId, subject }) }),
+  sleepSessionActive: (deviceId: string) => req(`/sleep-session/active/${deviceId}`),
   babyLogPredictions: (deviceId: string) => req(`/baby-log/${deviceId}/predictions`),
   handoffBalance: (householdCode: string) => req(`/handoff/balance/${householdCode}`),
 
@@ -255,6 +260,8 @@ export const api = {
   // ----- Wellbeing self-check -----
   wellbeingSelfCheck: (deviceId: string) => req(`/wellbeing/self-check/${deviceId}`),
   predictiveFeedNudge: (deviceId: string) => req(`/baby-log/${deviceId}/predictive-nudge`),
+  predictiveSleepNudge: (deviceId: string) => req(`/baby-log/${deviceId}/predictive-sleep-nudge`),
+  predictivePoopNudge: (deviceId: string) => req(`/baby-log/${deviceId}/predictive-poop-nudge`),
 
   // ----- Postpartum Support Directory -----
   supportCategories: () => req(`/support-directory/categories`),

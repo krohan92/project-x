@@ -21,6 +21,7 @@ import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useVoiceInput } from "@/src/lib/voice-input";
+import { FirstTimeHint } from "@/src/components/FirstTimeHint";
 
 const CHAT_BG =
   "https://images.unsplash.com/photo-1547148903-55829acc03a5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwxfHxnZW50bGUlMjBuYXR1cmUlMjBzb2Z0JTIwY2xheSUyMHRleHR1cmVzfGVufDB8fHx8MTc4Mjg3Mjk5OHww&ixlib=rb-4.1.0&q=85";
@@ -123,6 +124,13 @@ export default function Talk() {
         </Pressable>
       </View>
 
+      <View style={{ paddingHorizontal: spacing.lg }}>
+        <FirstTimeHint
+          hintKey="voice_logging_commands"
+          text={'New: talk to me naturally to log things too, try "log a 4oz feed," "baby\'s going to sleep," or "I\'m going to bed."'}
+        />
+      </View>
+
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.brand} />
@@ -216,7 +224,7 @@ export default function Talk() {
           testID="chat-input"
           value={input}
           onChangeText={setInput}
-          placeholder={voice.listening ? "Listening..." : "Type from the heart, or say it — try 'log a 4oz feed'"}
+          placeholder={voice.listening ? "Listening..." : "Type from the heart, or say it: try 'log a 4oz feed'"}
           placeholderTextColor={colors.muted}
           style={styles.input}
           multiline

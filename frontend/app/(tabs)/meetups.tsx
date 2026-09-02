@@ -16,6 +16,7 @@ import * as Haptics from "expo-haptics";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
+import { FirstTimeHint } from "@/src/components/FirstTimeHint";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
@@ -109,6 +110,8 @@ export default function Meetups() {
   const [categories, setCategories] = useState<any[]>([]);
   const [neighborhood, setNeighborhood] = useState("all");
   const [composeNeighborhood, setComposeNeighborhood] = useState("riverstone");
+  const [customAreaText, setCustomAreaText] = useState("");
+  const [pickingCustomArea, setPickingCustomArea] = useState(false);
   const [category, setCategory] = useState("all");
   const [meetups, setMeetups] = useState<any[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -143,6 +146,8 @@ export default function Meetups() {
   const openCompose = async () => {
     setComposeOpen(true);
     setDateIso(nextWeekdayDates()[0]?.iso || "");
+    setPickingCustomArea(false);
+    setCustomAreaText("");
     // A meetup has to belong to one real place — "All areas" is only a
     // browsing filter, never a valid target for creating one.
     const resolved = neighborhood !== "all" ? neighborhood : (neighborhoods[0]?.key || "riverstone");
@@ -153,6 +158,30 @@ export default function Meetups() {
       setVenues(sorted);
       setVenueName(sorted[0]?.name || "");
     } catch {}
+  };
+
+  const selectComposeArea = async (key: string) => {
+    Haptics.selectionAsync();
+    setPickingCustomArea(false);
+    setComposeNeighborhood(key);
+    try {
+      const v = await api.meetupVenues(key);
+      const sorted = sortVenuesForCategory(v, cat);
+      setVenues(sorted);
+      // No curated venues for this area (either custom, or genuinely
+      // empty) — skip straight to typing a spot rather than showing a
+      // blank list.
+      setVenueName(sorted[0]?.name || "__custom__");
+    } catch {
+      setVenues([]);
+      setVenueName("__custom__");
+    }
+  };
+
+  const confirmCustomArea = () => {
+    const trimmed = customAreaText.trim();
+    if (!trimmed) return;
+    selectComposeArea(trimmed);
   };
 
   const chooseCategory = (key: string) => {
@@ -181,6 +210,13 @@ export default function Meetups() {
       });
       setTitle(""); setDescription(""); setCustomVenue("");
       setComposeOpen(false);
+      // Explicitly refetch neighborhoods (not just meetups) — load()'s
+      // caching means it would otherwise never notice a brand new custom
+      // area until the app fully restarts.
+      try {
+        const freshNeighborhoods = await api.meetupNeighborhoods();
+        setNeighborhoods(freshNeighborhoods);
+      } catch {}
       await load(neighborhood, category);
       // Land right on the invite screen — creating a meetup with no one
       // else in it isn't useful until it's actually shared.
@@ -198,6 +234,11 @@ export default function Meetups() {
         <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
           Baby dates, mom dates, and get-togethers nearby
         </Txt>
+
+        <FirstTimeHint
+          hintKey="meetups_custom_area"
+          text="Not seeing your area in the list below? Tap + to create a meetup, you can add your own area right from there."
+        />
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
           <Pressable
@@ -248,7 +289,7 @@ export default function Meetups() {
           <Card style={{ alignItems: "center", paddingVertical: spacing.xl }}>
             <Feather name="users" size={28} color={colors.borderStrong} />
             <Txt style={{ color: colors.muted, marginTop: spacing.sm, textAlign: "center" }}>
-              Nothing planned here yet — be the first to start one.
+              Nothing planned here yet. Be the first to start one.
             </Txt>
           </Card>
         }
@@ -302,9 +343,54 @@ export default function Meetups() {
                 ))}
               </View>
 
+              <Txt weight="500">Area</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: -spacing.sm }}>
+                Not seeing your area? Add it below. It'll be there for other moms nearby too.
+              </Txt>
+              <View style={styles.chipWrap}>
+                {neighborhoods.map((n) => (
+                  <Pressable
+                    key={n.key}
+                    onPress={() => selectComposeArea(n.key)}
+                    style={[styles.formChip, composeNeighborhood === n.key && !pickingCustomArea && styles.chipActive]}
+                  >
+                    <Txt style={{ color: composeNeighborhood === n.key && !pickingCustomArea ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                      {n.label}
+                    </Txt>
+                  </Pressable>
+                ))}
+                <Pressable
+                  testID="meetup-custom-area-button"
+                  onPress={() => setPickingCustomArea(true)}
+                  style={[styles.formChip, pickingCustomArea && styles.chipActive]}
+                >
+                  <Txt style={{ color: pickingCustomArea ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                    My area isn't listed
+                  </Txt>
+                </Pressable>
+              </View>
+              {pickingCustomArea && (
+                <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+                  <TextInput
+                    testID="meetup-custom-area-input"
+                    value={customAreaText}
+                    onChangeText={setCustomAreaText}
+                    placeholder="Type your city or neighborhood"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.input, { flex: 1 }]}
+                    onSubmitEditing={confirmCustomArea}
+                  />
+                  <Pressable onPress={confirmCustomArea} style={styles.customAreaConfirm}>
+                    <Feather name="check" size={18} color={colors.onBrandPrimary} />
+                  </Pressable>
+                </View>
+              )}
+
               <Txt weight="500">Where</Txt>
               <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: -spacing.sm }}>
-                Sorted for a {(categories.find((c) => c.key === cat)?.label || "").toLowerCase()} — pick any spot below
+                {venues.length > 0
+                  ? `Sorted for a ${(categories.find((c) => c.key === cat)?.label || "").toLowerCase()}: pick any spot below`
+                  : "No pre-listed spots here yet. Just name the place below"}
               </Txt>
               <View style={{ gap: spacing.sm }}>
                 {venues.map((v) => (
@@ -444,6 +530,14 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  customAreaConfirm: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandPrimary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   formChip: {
     paddingHorizontal: spacing.md,

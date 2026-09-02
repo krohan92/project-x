@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet, ScrollView, Pressable, RefreshControl, TextInput } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -14,6 +14,7 @@ import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
 import { isNightTime } from "@/src/lib/night";
 import { HandoffCard } from "@/src/components/HandoffCard";
+import { FirstTimeHint } from "@/src/components/FirstTimeHint";
 import { ExactTimePicker } from "@/src/components/ExactTimePicker";
 
 const KINDS = [
@@ -55,6 +56,15 @@ function relativeFuture(iso: string) {
   if (mins < 60) return `in about ${mins}m`;
   return `around ${new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
+function relativePast(iso: string | null) {
+  if (!iso) return null;
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+  return `${new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}
 function _ozLabel(ml: number) {
   const oz = (ml / 29.5735).toFixed(1).replace(/\.0$/, "");
   return `${ml}ml (${oz}oz)`;
@@ -69,6 +79,9 @@ export default function Track() {
 
   const [logs, setLogs] = useState<any[]>([]);
   const [summary, setSummary] = useState<any | null>(null);
+  const [activeSessions, setActiveSessions] = useState<any[]>([]);
+  const [sessionBusy, setSessionBusy] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
   const [predictions, setPredictions] = useState<any | null>(null);
   const [balanceMessage, setBalanceMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,14 +101,16 @@ export default function Track() {
   const load = useCallback(async () => {
     if (!deviceId) return;
     try {
-      const [l, s, p] = await Promise.all([
+      const [l, s, p, sessions] = await Promise.all([
         api.babyLogs(deviceId),
         api.babyLogSummary(deviceId),
         api.babyLogPredictions(deviceId),
+        api.sleepSessionActive(deviceId),
       ]);
       setLogs(l);
       setSummary(s);
       setPredictions(p);
+      setActiveSessions(sessions);
     } catch {}
     try {
       const h = await api.householdForDevice(deviceId);
@@ -107,9 +122,58 @@ export default function Track() {
       }
     } catch {}
     api.predictiveFeedNudge(deviceId).catch(() => {});
+    api.predictiveSleepNudge(deviceId).catch(() => {});
+    api.predictivePoopNudge(deviceId).catch(() => {});
   }, [deviceId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // A live timer needs two different refresh rhythms: the displayed "Xm"
+  // ticks up every 30s locally without hitting the server, while a real
+  // periodic reload every 20s is what actually catches the other
+  // caregiver starting or stopping a session on their own phone.
+  useEffect(() => {
+    const tickId = setInterval(() => setNowTick(Date.now()), 30000);
+    const reloadId = setInterval(() => { if (deviceId) api.sleepSessionActive(deviceId).then(setActiveSessions).catch(() => {}); }, 20000);
+    return () => { clearInterval(tickId); clearInterval(reloadId); };
+  }, [deviceId]);
+
+  const babySession = activeSessions.find((s) => s.subject === "baby");
+  const mySelfSession = activeSessions.find((s) => s.subject === "self" && s.is_you);
+  const partnerSelfSession = activeSessions.find((s) => s.subject === "self" && !s.is_you);
+
+  const minsSince = (iso: string) => Math.max(0, Math.round((nowTick - new Date(iso).getTime()) / 60000));
+  const fmtDuration = (mins: number) => (mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`);
+
+  const toggleBabySession = async () => {
+    if (!deviceId) return;
+    setSessionBusy("baby");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      if (babySession) {
+        await api.sleepSessionStop(deviceId, "baby");
+      } else {
+        await api.sleepSessionStart(deviceId, "baby");
+      }
+      await load();
+    } catch {}
+    setSessionBusy(null);
+  };
+
+  const toggleSelfSession = async () => {
+    if (!deviceId) return;
+    setSessionBusy("self");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      if (mySelfSession) {
+        await api.sleepSessionStop(deviceId, "self");
+      } else {
+        await api.sleepSessionStart(deviceId, "self");
+      }
+      await load();
+    } catch {}
+    setSessionBusy(null);
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -190,8 +254,107 @@ export default function Track() {
           </Animated.View>
         )}
 
+        {/* Right now — live sessions, the most immediate thing to act on */}
+        <FirstTimeHint
+          hintKey="live_sleep_timer"
+          text="New: start a live timer when baby goes down, and stop it the moment they wake, for a more accurate log than guessing after the fact."
+        />
+        {babySession && (
+          <Card style={styles.liveCard}>
+            <View style={styles.liveDot} />
+            <View style={{ flex: 1 }}>
+              <Txt weight="500">Baby is sleeping</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+                Started {fmtDuration(minsSince(babySession.started_at))} ago
+                {babySession.owner_name ? ` by ${babySession.is_you ? "you" : babySession.owner_name}` : ""}
+              </Txt>
+            </View>
+            <Pressable
+              testID="stop-baby-sleep"
+              onPress={toggleBabySession}
+              disabled={sessionBusy === "baby"}
+              style={styles.stopButton}
+            >
+              <Txt weight="500" style={{ color: colors.onBrandPrimary, fontSize: fontSize.sm }}>Stop</Txt>
+            </Pressable>
+          </Card>
+        )}
+
+        {mySelfSession && (
+          <Card style={[styles.liveCard, { backgroundColor: colors.brandTertiary + "30" }]}>
+            <View style={[styles.liveDot, { backgroundColor: colors.brand }]} />
+            <View style={{ flex: 1 }}>
+              <Txt weight="500">You're resting</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
+                For {fmtDuration(minsSince(mySelfSession.started_at))} so far, well deserved
+              </Txt>
+            </View>
+            <Pressable
+              testID="stop-self-rest"
+              onPress={toggleSelfSession}
+              disabled={sessionBusy === "self"}
+              style={styles.stopButton}
+            >
+              <Txt weight="500" style={{ color: colors.onBrandPrimary, fontSize: fontSize.sm }}>I'm up</Txt>
+            </Pressable>
+          </Card>
+        )}
+
+        {partnerSelfSession && (
+          <Card style={[styles.liveCard, { backgroundColor: colors.brandSecondary + "25" }]}>
+            <Feather name="moon" size={18} color={colors.onBrandSecondary} />
+            <Txt style={{ flex: 1, color: colors.onSurface }}>
+              {partnerSelfSession.owner_name || "Your partner"} is resting right now, since {fmtDuration(minsSince(partnerSelfSession.started_at))} ago
+            </Txt>
+          </Card>
+        )}
+
+        {!babySession && (
+          <Pressable testID="start-baby-sleep" onPress={toggleBabySession} disabled={sessionBusy === "baby"}>
+            <Card style={styles.startCard}>
+              <Feather name="play-circle" size={20} color={colors.brand} />
+              <Txt weight="500" style={{ flex: 1 }}>Start baby's sleep timer</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>most accurate</Txt>
+            </Card>
+          </Pressable>
+        )}
+
+        {!mySelfSession && (
+          <Pressable testID="start-self-rest" onPress={toggleSelfSession} disabled={sessionBusy === "self"}>
+            <Card style={[styles.startCard, { marginTop: spacing.sm }]}>
+              <Feather name="moon" size={20} color={colors.brand} />
+              <Txt weight="500" style={{ flex: 1 }}>I'm going to rest too</Txt>
+            </Card>
+          </Pressable>
+        )}
+
+        {/* Since last... — the very first thing a tired parent wants to know */}
+        {summary && (summary.last_feed_at || summary.last_pee_at || summary.last_poop_at || summary.last_sleep_at) && (
+          <>
+            <Txt display style={[styles.section, { marginTop: spacing.xl }]}>Since last...</Txt>
+            <View style={styles.totalsRow}>
+              <View style={styles.totalItem}>
+                <Txt display style={styles.sinceNum}>{relativePast(summary.last_feed_at) || "—"}</Txt>
+                <Txt style={styles.totalLabel}>fed</Txt>
+              </View>
+              <View style={styles.totalItem}>
+                <Txt display style={styles.sinceNum}>{relativePast(summary.last_pee_at) || "—"}</Txt>
+                <Txt style={styles.totalLabel}>pee</Txt>
+              </View>
+              <View style={styles.totalItem}>
+                <Txt display style={styles.sinceNum}>{relativePast(summary.last_poop_at) || "—"}</Txt>
+                <Txt style={styles.totalLabel}>poop</Txt>
+              </View>
+              <View style={styles.totalItem}>
+                <Txt display style={styles.sinceNum}>{relativePast(summary.last_sleep_at) || "—"}</Txt>
+                <Txt style={styles.totalLabel}>sleep</Txt>
+              </View>
+            </View>
+          </>
+        )}
+
         {/* Today's totals */}
-        {summary && (summary.feed_count > 0 || summary.pee_count > 0 || summary.poop_count > 0) && (
+        {summary && (summary.feed_count > 0 || summary.pee_count > 0 || summary.poop_count > 0 || summary.sleep_count > 0) && (
           <>
             <Txt display style={[styles.section, { marginTop: spacing.xl }]}>Today so far</Txt>
             <View style={styles.totalsRow}>
@@ -207,12 +370,20 @@ export default function Track() {
                 <Txt display style={styles.totalNum}>{summary.poop_count}</Txt>
                 <Txt style={styles.totalLabel}>poop</Txt>
               </View>
+              <View style={styles.totalItem}>
+                <Txt display style={styles.totalNum}>
+                  {summary.sleep_total_minutes >= 60
+                    ? `${Math.floor(summary.sleep_total_minutes / 60)}h${summary.sleep_total_minutes % 60 ? ` ${summary.sleep_total_minutes % 60}m` : ""}`
+                    : `${summary.sleep_total_minutes}m`}
+                </Txt>
+                <Txt style={styles.totalLabel}>sleep</Txt>
+              </View>
             </View>
           </>
         )}
 
         {/* Predictions — based on this baby's own recent pattern */}
-        {predictions && (predictions.feed || predictions.pee) && (
+        {predictions && (predictions.feed || predictions.pee || predictions.sleep) && (
           <Card style={{ gap: spacing.sm, marginTop: spacing.md }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               <Feather name="trending-up" size={16} color={colors.brand} />
@@ -230,6 +401,22 @@ export default function Track() {
               <Txt style={{ color: colors.onSurface }}>
                 Next diaper change likely {relativeFuture(predictions.pee.predicted_at)}
               </Txt>
+            )}
+            {predictions.sleep && (
+              <>
+                <Txt style={{ color: colors.onSurface }}>
+                  Next nap likely {relativeFuture(predictions.sleep.predicted_at)}
+                  {predictions.sleep.confidence === "early" ? " (still learning)" : ""}
+                </Txt>
+                {(() => {
+                  const minsUntil = Math.round((new Date(predictions.sleep.predicted_at).getTime() - Date.now()) / 60000);
+                  return minsUntil <= 30 ? (
+                    <Txt style={{ color: colors.brand, fontSize: fontSize.sm }}>
+                      That's coming up soon, might be a good window to rest too, not just baby.
+                    </Txt>
+                  ) : null;
+                })()}
+              </>
             )}
           </Card>
         )}
@@ -397,6 +584,11 @@ export default function Track() {
                   <View style={{ flex: 1 }}>
                     <Txt weight="500">{m.label}</Txt>
                     {!!detail && <Txt style={{ color: colors.muted, fontSize: fontSize.sm, textTransform: "capitalize" }}>{detail}</Txt>}
+                    {!!l.logged_by_name && (
+                      <Txt style={{ color: colors.brand, fontSize: 11, marginTop: 2 }}>
+                        {l.logged_by_you ? "You" : l.logged_by_name}
+                      </Txt>
+                    )}
                   </View>
                   <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
                     {dayStr(l.at)} · {timeStr(l.at)}
@@ -406,6 +598,21 @@ export default function Track() {
             })}
           </Card>
         )}
+
+        {/* Newborn basics */}
+        <Txt display style={styles.section}>Newborn basics</Txt>
+        <Pressable testID="track-newborn-basics" onPress={() => router.push("/newborn-basics")}>
+          <Card style={styles.linkCard}>
+            <View style={[styles.linkIcon, { backgroundColor: "#9FC4C7" + "60" }]}>
+              <Feather name="shield" size={20} color="#4C6E8F" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Safe sleep, swaddling, bathing & diapers</Txt>
+              <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Clear, current guidance for the everyday basics</Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
 
         {/* For you */}
         <Txt display style={styles.section}>{t("track.section.me")}</Txt>
@@ -493,6 +700,33 @@ const styles = StyleSheet.create({
     borderColor: "#3D3450",
     marginBottom: spacing.md,
   },
+  liveCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: "#E3D9F0",
+    borderColor: "#C9B8E0",
+    marginTop: spacing.md,
+  },
+  liveDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#7B5C96",
+  },
+  stopButton: {
+    backgroundColor: colors.brandPrimary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+  },
+  startCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginTop: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+  },
   totalsRow: { flexDirection: "row", gap: spacing.md },
   totalItem: {
     flex: 1,
@@ -504,6 +738,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   totalNum: { fontSize: fontSize.xl },
+  sinceNum: { fontSize: fontSize.base, textAlign: "center" },
   totalLabel: { color: colors.muted, fontSize: fontSize.sm, marginTop: 2 },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   customOzRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },

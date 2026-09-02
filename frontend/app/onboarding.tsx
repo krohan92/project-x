@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -27,6 +28,14 @@ const BG =
 
 const MOODS = ["😔", "😟", "😐", "🙂", "😊"];
 const MOOD_LABELS = ["Struggling", "Low", "Okay", "Good", "Great"];
+
+const FEATURE_CARDS: { title: string; body: string; icon: keyof typeof Feather.glyphMap; color: string }[] = [
+  { title: "Tag Team", body: "Link up with your partner or a caregiver so it's not all in your head, whose turn it is or how tired everyone actually is.", icon: "refresh-cw", color: "#D68C7A" },
+  { title: "Talk to Cuddle", body: "A warm companion for the 3am \"is this normal?\" moments, day or night. You can even just say things out loud to log them.", icon: "message-circle", color: "#7B5C96" },
+  { title: "Meetups", body: "Real local parks and hangouts for a baby date, a mom date, or a walk with your stroller, matched to your actual area.", icon: "map-pin", color: "#4C6E8F" },
+  { title: "Recovery", body: "Gentle daily check-ins on your own healing too, not just baby's, with a timeline for exactly where you are right now.", icon: "activity", color: "#B23B3B" },
+  { title: "Real local support", body: "A verified directory of nearby lactation consultants, doulas, and postpartum specialists, with real numbers to call.", icon: "phone", color: "#5E7A4A" },
+];
 
 function OptionCard({
   label,
@@ -58,10 +67,13 @@ function OptionCard({
 
 export default function Onboarding() {
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
   const router = useRouter();
   const { deviceId, refresh } = useProfile();
 
   const [step, setStep] = useState(0);
+  const [showFeatureIntro, setShowFeatureIntro] = useState(false);
+  const [featureCard, setFeatureCard] = useState(0);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -109,7 +121,7 @@ export default function Onboarding() {
     if (!deviceId) {
       // deviceId should already be loaded by this point in the flow, but if
       // it somehow isn't, tell her instead of silently doing nothing.
-      Alert.alert("One moment", "Still getting things ready — please try again in a second.");
+      Alert.alert("One moment", "Still getting things ready. Please try again in a second.");
       return;
     }
     setSaving(true);
@@ -141,7 +153,7 @@ export default function Onboarding() {
       router.replace("/(tabs)");
     } catch (e: any) {
       setSaving(false);
-      const msg = "Couldn't save just now — check your connection and try again.";
+      const msg = "Couldn't save just now. Check your connection and try again.";
       setErrorMsg(msg);
       Alert.alert("Something went wrong", msg);
       console.log("onboarding save failed:", e?.message || e);
@@ -150,12 +162,66 @@ export default function Onboarding() {
 
   const next = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (step === 0) {
+      setShowFeatureIntro(true);
+      return;
+    }
     if (step === TOTAL - 1) {
       finish();
     } else {
       setStep((s) => s + 1);
     }
   };
+
+  // Brief feature highlight, shown once between the welcome screen and the
+  // real setup questions. Kept to one screen with a skip option, since
+  // most people skip long onboarding tours entirely; this is a taste, not
+  // a tutorial.
+  if (showFeatureIntro) {
+    const enterSetup = () => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setShowFeatureIntro(false);
+      setStep(1);
+    };
+    return (
+      <View style={[styles.introScreen, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg }]}>
+        <Pressable testID="feature-intro-skip" onPress={enterSetup} style={styles.introSkip}>
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Skip</Txt>
+        </Pressable>
+
+        <Txt display style={styles.introTitle}>A few things worth knowing</Txt>
+
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={(e) => {
+            const idx = Math.round(e.nativeEvent.contentOffset.x / e.nativeEvent.layoutMeasurement.width);
+            setFeatureCard(idx);
+          }}
+          style={{ flexGrow: 0 }}
+        >
+          {FEATURE_CARDS.map((card) => (
+            <View key={card.title} style={[styles.introCardWrap, { width: screenWidth }]}>
+              <View style={[styles.introIconBubble, { backgroundColor: card.color + "30" }]}>
+                <Feather name={card.icon} size={28} color={card.color} />
+              </View>
+              <Txt display style={styles.introCardTitle}>{card.title}</Txt>
+              <Txt style={styles.introCardBody}>{card.body}</Txt>
+            </View>
+          ))}
+        </ScrollView>
+
+        <View style={styles.introDots}>
+          {FEATURE_CARDS.map((_, i) => (
+            <View key={i} style={[styles.introDot, i === featureCard && styles.introDotActive]} />
+          ))}
+        </View>
+
+        <Button testID="feature-intro-continue" label="Let's begin" onPress={enterSetup} style={{ marginTop: spacing.lg }} />
+      </View>
+    );
+  }
 
   // Welcome screen (full bleed)
   if (step === 0) {
@@ -174,7 +240,7 @@ export default function Onboarding() {
             </Txt>
             <Txt style={styles.welcomeSub}>
               A gentle, private space to be heard, to check in with yourself, and
-              to feel less alone — every hour of every day.
+              to feel less alone, every hour of every day.
             </Txt>
           </Animated.View>
           <Animated.View entering={FadeIn.delay(400)}>
@@ -422,6 +488,61 @@ export default function Onboarding() {
 }
 
 const styles = StyleSheet.create({
+  introScreen: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  introSkip: {
+    alignSelf: "flex-end",
+    padding: spacing.sm,
+  },
+  introTitle: {
+    fontSize: fontSize.xl,
+    textAlign: "center",
+    marginTop: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  introCardWrap: {
+    alignItems: "center",
+    paddingHorizontal: spacing.xl,
+    justifyContent: "center",
+  },
+  introIconBubble: {
+    width: 72,
+    height: 72,
+    borderRadius: radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.lg,
+  },
+  introCardTitle: {
+    fontSize: fontSize.xl,
+    textAlign: "center",
+    marginBottom: spacing.sm,
+  },
+  introCardBody: {
+    fontSize: fontSize.base,
+    lineHeight: 23,
+    textAlign: "center",
+    color: colors.onSurfaceSecondary,
+  },
+  introDots: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  introDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.border,
+  },
+  introDotActive: {
+    backgroundColor: colors.brandPrimary,
+    width: 20,
+  },
   welcome: { flex: 1, backgroundColor: colors.surfaceInverse },
   welcomeContent: {
     flex: 1,

@@ -137,6 +137,20 @@ export default function Care() {
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Card>
         </Pressable>
+        <Pressable testID="care-guide" onPress={() => router.push("/guide")}>
+          <Card style={styles.rowCard}>
+            <View style={[styles.iconBubble, { backgroundColor: colors.brandTertiary + "40" }]}>
+              <Feather name="compass" size={20} color={colors.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500" style={{ fontSize: fontSize.lg }}>What's in Cuddle</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
+                A quick guide to everything, tab by tab
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Card>
+        </Pressable>
         <Pressable testID="care-support-directory" onPress={() => router.push("/support-directory")}>
           <Card style={styles.rowCard}>
             <View style={[styles.iconBubble, { backgroundColor: "#93B4D6" + "40" }]}>
