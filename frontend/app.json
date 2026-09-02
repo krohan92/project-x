@@ -2,7 +2,7 @@
   "expo": {
     "name": "Cuddle",
     "slug": "cuddle-postpartum",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "cuddle",
@@ -11,9 +11,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
+      "buildNumber": "20",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support",
-        "ITSAppUsesNonExemptEncryption": false
+        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
       }
     },
     "android": {
@@ -23,10 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.cuddle.postpartum",
-      "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
-      ]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "web": {
       "bundler": "metro",
@@ -47,12 +44,6 @@
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "a41e462b-7569-4e74-a42d-4a095b805102"
-      }
     }
   }
 }
