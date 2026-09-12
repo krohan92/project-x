@@ -103,6 +103,7 @@ export default function RootLayout() {
                 <Stack.Screen name="support" />
                 <Stack.Screen name="newborn-basics" />
                 <Stack.Screen name="guide" />
+                <Stack.Screen name="send-encouragement" />
                 <Stack.Screen
                   name="yoga"
                   options={{ presentation: "modal", animation: "slide_from_bottom" }}

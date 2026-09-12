@@ -82,6 +82,7 @@ export default function Track() {
   const [activeSessions, setActiveSessions] = useState<any[]>([]);
   const [sessionBusy, setSessionBusy] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
+  const [myRestPrediction, setMyRestPrediction] = useState<any | null>(null);
   const [predictions, setPredictions] = useState<any | null>(null);
   const [balanceMessage, setBalanceMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,16 +102,18 @@ export default function Track() {
   const load = useCallback(async () => {
     if (!deviceId) return;
     try {
-      const [l, s, p, sessions] = await Promise.all([
+      const [l, s, p, sessions, myRest] = await Promise.all([
         api.babyLogs(deviceId),
         api.babyLogSummary(deviceId),
         api.babyLogPredictions(deviceId),
         api.sleepSessionActive(deviceId),
+        api.caregiverRestPredictions(deviceId),
       ]);
       setLogs(l);
       setSummary(s);
       setPredictions(p);
       setActiveSessions(sessions);
+      setMyRestPrediction(myRest?.sleep || null);
     } catch {}
     try {
       const h = await api.householdForDevice(deviceId);
@@ -234,16 +237,23 @@ export default function Track() {
           <Pressable testID="track-night-light" onPress={() => router.push("/night-light")}>
             <Card style={styles.nightNudge}>
               <Feather name="star" size={16} color="#F3D9A4" />
-              <Txt style={{ color: colors.onSurface, flex: 1 }}>
+              <Txt style={{ color: colors.onSurfaceInverse, flex: 1 }}>
                 Up logging again? There's a quiet moment waiting if you need it.
               </Txt>
-              <Feather name="chevron-right" size={18} color={colors.muted} />
+              <Feather name="chevron-right" size={18} color={colors.onSurfaceInverse + "80"} />
             </Card>
           </Pressable>
         )}
 
         {/* Tag Team hand-off */}
         <HandoffCard />
+
+        <Pressable testID="track-send-encouragement" onPress={() => router.push("/send-encouragement")}>
+          <Card style={[styles.startCard, { marginTop: spacing.sm }]}>
+            <Feather name="heart" size={20} color={colors.brand} />
+            <Txt weight="500" style={{ flex: 1 }}>Send a little love</Txt>
+          </Card>
+        </Pressable>
 
         {balanceMessage && (
           <Animated.View entering={FadeIn}>
@@ -328,6 +338,12 @@ export default function Track() {
           </Pressable>
         )}
 
+        {!mySelfSession && myRestPrediction && (
+          <Txt style={{ color: colors.muted, fontSize: fontSize.sm, marginTop: spacing.xs, marginLeft: spacing.sm }}>
+            Based on your own recent pattern, you might be ready to rest {relativeFuture(myRestPrediction.predicted_at)}
+          </Txt>
+        )}
+
         {/* Since last... — the very first thing a tired parent wants to know */}
         {summary && (summary.last_feed_at || summary.last_pee_at || summary.last_poop_at || summary.last_sleep_at) && (
           <>
@@ -395,6 +411,7 @@ export default function Track() {
               <Txt style={{ color: colors.onSurface }}>
                 Next feed likely {relativeFuture(predictions.feed.predicted_at)}
                 {predictions.feed.confidence === "early" ? " (still learning)" : ""}
+                {predictions.feed.confidence === "age_estimate" ? " (typical for this age, not yet baby's own pattern)" : ""}
               </Txt>
             )}
             {predictions.pee && (
@@ -407,6 +424,7 @@ export default function Track() {
                 <Txt style={{ color: colors.onSurface }}>
                   Next nap likely {relativeFuture(predictions.sleep.predicted_at)}
                   {predictions.sleep.confidence === "early" ? " (still learning)" : ""}
+                  {predictions.sleep.confidence === "age_estimate" ? " (typical for this age, not yet baby's own pattern)" : ""}
                 </Txt>
                 {(() => {
                   const minsUntil = Math.round((new Date(predictions.sleep.predicted_at).getTime() - Date.now()) / 60000);

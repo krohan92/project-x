@@ -82,6 +82,7 @@ export default function Home() {
   const [apptDismissed, setApptDismissed] = useState(false);
   const [ateToday, setAteToday] = useState<boolean | null>(null);
   const [mealCheckDone, setMealCheckDone] = useState(true);
+  const [encouragement, setEncouragement] = useState<any | null>(null);
 
   const daysSinceDelivery = profile?.delivery_date
     ? Math.floor((Date.now() - new Date(profile.delivery_date).getTime()) / 86400000)
@@ -114,6 +115,7 @@ export default function Home() {
       const insight = await api.weeklyInsights(profile.device_id);
       setWeeklyInsight(insight?.reflection || null);
     } catch {}
+    api.latestEncouragement(profile.device_id).then(setEncouragement).catch(() => {});
     api.wellbeingSelfCheck(profile.device_id).catch(() => {});
   }, [profile]);
 
@@ -219,6 +221,31 @@ export default function Home() {
                 {quote && <Txt style={styles.heroAuthor}>— {quote.author}</Txt>}
               </View>
             </View>
+          </Animated.View>
+        )}
+
+        {encouragement && (
+          <Animated.View entering={FadeInDown.duration(500)}>
+            <Card style={styles.encouragementCard}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xs }}>
+                <Feather name="heart" size={16} color={colors.brand} />
+                <Txt style={{ color: colors.brand, fontSize: fontSize.sm }} weight="500">SOMEONE'S THINKING OF YOU</Txt>
+              </View>
+              <Txt style={{ fontSize: fontSize.lg, color: colors.onSurface, fontStyle: "italic" }}>
+                "{encouragement.message}"
+              </Txt>
+              <Pressable
+                testID="encouragement-dismiss"
+                onPress={async () => {
+                  if (!profile) return;
+                  await api.markEncouragementSeen(profile.device_id);
+                  setEncouragement(null);
+                }}
+                style={{ alignSelf: "flex-end", marginTop: spacing.sm }}
+              >
+                <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Dismiss</Txt>
+              </Pressable>
+            </Card>
           </Animated.View>
         )}
 
@@ -455,6 +482,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.25)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  encouragementCard: {
+    backgroundColor: colors.brandTertiary + "30",
+    borderColor: colors.brandTertiary,
+    marginBottom: spacing.md,
   },
   moodDone: {
     flexDirection: "row",

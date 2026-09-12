@@ -43,6 +43,8 @@ JWT_EXPIRE_DAYS = 90
 APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
 GMAIL_USER = os.environ.get('GMAIL_USER')          # e.g. rohankhanna1992@gmail.com
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')  # a Gmail "App Password", not the real password
+INSTACART_API_KEY = os.environ.get('INSTACART_API_KEY')
+INSTACART_BASE_URL = os.environ.get('INSTACART_BASE_URL', 'https://connect.dev.instacart.tools')  # switch to https://connect.instacart.com with a production key when ready to go live
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -104,6 +106,12 @@ class MoodEntryCreate(BaseModel):
     sleep_hours: Optional[float] = None
     note: Optional[str] = None
     tags: List[str] = []
+
+
+class EncouragementCreate(BaseModel):
+    from_device_id: str
+    to_device_id: str
+    message: str
 
 
 class EpdsResult(BaseModel):
@@ -609,7 +617,86 @@ async def get_pump_providers():
 async def add_mood(entry: MoodEntryCreate):
     obj = MoodEntry(**entry.model_dump())
     await db.moods.insert_one(obj.model_dump())
+
+    # A gentle nudge to her partner when things look genuinely low, not
+    # a running commentary on every mood logged. Deliberately doesn't
+    # expose the exact score or her tags to him — just enough for him to
+    # know she could use something warm today, kept at a dignity-first
+    # level of detail, not a clinical readout of her private check-in.
+    if entry.mood <= 2:
+        household = await db.households.find_one({"members.device_id": entry.device_id})
+        if household:
+            other_member = next(
+                (m for m in household["members"] if m["device_id"] != entry.device_id), None
+            )
+            if other_member:
+                today = datetime.now(timezone.utc).date().isoformat()
+                already_nudged = await db.encouragement_nudge_tracker.find_one(
+                    {"to_device_id": other_member["device_id"], "for_device_id": entry.device_id, "date": today}
+                )
+                if not already_nudged:
+                    name = next((m.get("name") for m in household["members"] if m["device_id"] == entry.device_id), None)
+                    await send_push(
+                        other_member["device_id"],
+                        "Cuddle",
+                        f"{name or 'She'}'s having a harder day today. A few kind words from you could genuinely help, want to send something?",
+                    )
+                    await db.encouragement_nudge_tracker.update_one(
+                        {"to_device_id": other_member["device_id"], "for_device_id": entry.device_id, "date": today},
+                        {"$set": {"sent_at": now_iso()}},
+                        upsert=True,
+                    )
     return obj.model_dump()
+
+
+@api_router.post("/encouragement")
+async def send_encouragement(e: EncouragementCreate):
+    """The actual message he writes, delivered as its own real push, not
+    just a generic 'you have a note' teaser — the words themselves are
+    the whole point here."""
+    message = e.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message can't be empty")
+
+    doc = {
+        "from_device_id": e.from_device_id,
+        "to_device_id": e.to_device_id,
+        "message": message,
+        "created_at": now_iso(),
+        "seen": False,
+    }
+    result = await db.encouragement_messages.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+
+    household = await db.households.find_one({"members.device_id": e.from_device_id})
+    sender_name = None
+    if household:
+        sender_name = next((m.get("name") for m in household["members"] if m["device_id"] == e.from_device_id), None)
+    await send_push(
+        e.to_device_id,
+        f"💛 A note from {sender_name or 'someone who cares'}",
+        message,
+    )
+    return doc
+
+
+@api_router.get("/encouragement/{device_id}/latest")
+async def latest_encouragement(device_id: str):
+    """The most recent message that hasn't been seen yet, for showing on
+    her Home screen too, since a push notification alone can be missed
+    or accidentally swiped away before it's really read."""
+    doc = await db.encouragement_messages.find_one(
+        {"to_device_id": device_id, "seen": False}, {"_id": 0}, sort=[("created_at", -1)]
+    )
+    return doc
+
+
+@api_router.post("/encouragement/{device_id}/mark-seen")
+async def mark_encouragement_seen(device_id: str):
+    await db.encouragement_messages.update_many(
+        {"to_device_id": device_id, "seen": False}, {"$set": {"seen": True}}
+    )
+    return {"ok": True}
 
 
 @api_router.get("/mood/{device_id}")
@@ -722,6 +809,20 @@ CHAT_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_meal_ideas",
+        "description": "Returns the real available recipes with their ingredients, so you can pick and suggest one that genuinely fits what she said, e.g. she's exhausted and wants something easy, craving something warm and comforting, or wants to meal-prep ahead. Use when she describes how she's feeling and asks what to make, or directly asks for a meal/recipe suggestion.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "start_recipe_shopping",
+        "description": "Once she's decided on a specific recipe (from get_meal_ideas), use this to generate a real Instacart shopping link for its ingredients, so she can order them directly. Only call this once she's actually confirmed which recipe she wants, not just browsing ideas.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"recipe_id": {"type": "string", "description": "The id field from get_meal_ideas for the recipe she chose."}},
+            "required": ["recipe_id"],
+        },
+    },
+    {
         "name": "tag_team_switch",
         "description": "Switch Tag Team duty to whoever is chatting right now. Use for phrases like 'I've got it', 'switching to me', or 'I'm taking over'.",
         "input_schema": {"type": "object", "properties": {}},
@@ -789,6 +890,24 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
             return "There wasn't a rest timer running for her right now."
         mins = result['duration_minutes']
         return f"Logged: she rested for {mins} minute{'s' if mins != 1 else ''}."
+
+    if name == "get_meal_ideas":
+        lines = []
+        for r in HOMELY_RECIPES:
+            ing_names = ", ".join(i["name"] for i in r["ingredients"])
+            lines.append(f"id: {r['id']} | {r['title']} | {r['cooking_time']} min | ingredients: {ing_names}")
+        return "Real available recipes:\n" + "\n".join(lines)
+
+    if name == "start_recipe_shopping":
+        recipe_id = tool_input.get("recipe_id")
+        recipe = next((r for r in HOMELY_RECIPES if r["id"] == recipe_id), None)
+        if not recipe:
+            return f"Couldn't find a recipe with id '{recipe_id}'. Use get_meal_ideas first to see real ids."
+        try:
+            result = await _create_instacart_recipe_link(recipe, only_ingredient_names=None)
+            return f"Real shopping link ready for {recipe['title']}: {result['shopping_url']}"
+        except HTTPException as e:
+            return f"Couldn't create the shopping link right now: {e.detail}"
 
     if name == "tag_team_switch":
         h = await db.households.find_one({"members.device_id": device_id})
@@ -988,6 +1107,135 @@ CULTURAL_SPACES = [
     {"key": "east_asian", "label": "East Asian Moms", "tag": "East Asian"},
     {"key": "mena", "label": "MENA Moms", "tag": "Middle Eastern / Arab"},
 ]
+
+# Genuinely simple, real recipes chosen for the actual postpartum reality:
+# quick, nutritious, mostly one-handed-friendly for nursing/holding a baby.
+# Being honest rather than overstating: the "lactation" snack is popular in
+# postpartum circles, but the evidence it actually boosts milk supply is
+# limited, so the description says that plainly rather than promising it.
+HOMELY_RECIPES = [
+    {
+        "id": "one_pan_salmon",
+        "title": "One-Pan Lemon Garlic Salmon with Asparagus",
+        "servings": 2,
+        "cooking_time": 20,
+        "ingredients": [
+            {"name": "salmon fillets", "quantity": 2, "unit": "FILLET"},
+            {"name": "asparagus", "quantity": 1, "unit": "POUND"},
+            {"name": "lemon", "quantity": 1, "unit": "EACH"},
+            {"name": "garlic", "quantity": 3, "unit": "CLOVE"},
+            {"name": "olive oil", "quantity": 2, "unit": "TABLESPOON"},
+            {"name": "salt", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "black pepper", "quantity": 0.5, "unit": "TEASPOON"},
+        ],
+        "instructions": [
+            "Preheat oven to 400°F.",
+            "Toss asparagus with half the olive oil, salt, and pepper on a sheet pan.",
+            "Place salmon on the same pan, drizzle with remaining oil, minced garlic, and lemon juice.",
+            "Bake 12-15 minutes until salmon flakes easily.",
+        ],
+    },
+    {
+        "id": "overnight_oats",
+        "title": "Overnight Oats with Berries",
+        "servings": 1,
+        "cooking_time": 5,
+        "ingredients": [
+            {"name": "rolled oats", "quantity": 0.5, "unit": "CUP"},
+            {"name": "milk", "quantity": 0.5, "unit": "CUP"},
+            {"name": "greek yogurt", "quantity": 0.25, "unit": "CUP"},
+            {"name": "mixed berries", "quantity": 0.5, "unit": "CUP"},
+            {"name": "honey", "quantity": 1, "unit": "TABLESPOON"},
+            {"name": "chia seeds", "quantity": 1, "unit": "TABLESPOON"},
+        ],
+        "instructions": [
+            "Combine oats, milk, yogurt, honey, and chia seeds in a jar.",
+            "Stir well, top with berries, cover, and refrigerate overnight.",
+            "Eat cold, straight from the jar, no reheating needed.",
+        ],
+    },
+    {
+        "id": "postpartum_energy_bites",
+        "title": "Oat & Flax Energy Bites",
+        "servings": 12,
+        "cooking_time": 15,
+        "ingredients": [
+            {"name": "rolled oats", "quantity": 1, "unit": "CUP"},
+            {"name": "ground flaxseed", "quantity": 0.25, "unit": "CUP"},
+            {"name": "peanut butter", "quantity": 0.5, "unit": "CUP"},
+            {"name": "honey", "quantity": 0.33, "unit": "CUP"},
+            {"name": "brewers yeast", "quantity": 2, "unit": "TABLESPOON"},
+            {"name": "mini chocolate chips", "quantity": 0.25, "unit": "CUP"},
+        ],
+        "instructions": [
+            "Mix all ingredients together in a bowl until well combined.",
+            "Roll into small balls, about a tablespoon each.",
+            "Refrigerate at least 30 minutes before eating, store in the fridge up to a week.",
+            "A popular postpartum snack, though the evidence that ingredients like brewer's yeast meaningfully boost milk supply is limited. Worth having regardless as a quick, real-food snack for one-handed eating.",
+        ],
+    },
+    {
+        "id": "simple_chicken_soup",
+        "title": "Simple Chicken and Vegetable Soup",
+        "servings": 4,
+        "cooking_time": 35,
+        "ingredients": [
+            {"name": "chicken breast", "quantity": 1, "unit": "POUND"},
+            {"name": "carrots", "quantity": 3, "unit": "EACH"},
+            {"name": "celery", "quantity": 3, "unit": "STALK"},
+            {"name": "yellow onion", "quantity": 1, "unit": "EACH"},
+            {"name": "chicken broth", "quantity": 6, "unit": "CUP"},
+            {"name": "egg noodles", "quantity": 2, "unit": "CUP"},
+            {"name": "salt", "quantity": 1, "unit": "TEASPOON"},
+        ],
+        "instructions": [
+            "Sauté diced onion, carrots, and celery until softened.",
+            "Add broth and chicken breast, bring to a boil, then simmer 20 minutes.",
+            "Shred the cooked chicken, add noodles, and simmer 8 more minutes until noodles are tender.",
+            "Freezes well for up to 3 months, real value for a night you can't cook.",
+        ],
+    },
+    {
+        "id": "avocado_toast_egg",
+        "title": "Avocado Toast with a Fried Egg",
+        "servings": 1,
+        "cooking_time": 8,
+        "ingredients": [
+            {"name": "whole grain bread", "quantity": 2, "unit": "SLICE"},
+            {"name": "avocado", "quantity": 1, "unit": "EACH"},
+            {"name": "eggs", "quantity": 1, "unit": "EACH"},
+            {"name": "lemon", "quantity": 0.5, "unit": "EACH"},
+            {"name": "red pepper flakes", "quantity": 1, "unit": "PINCH"},
+            {"name": "salt", "quantity": 1, "unit": "PINCH"},
+        ],
+        "instructions": [
+            "Toast the bread. Mash avocado with lemon juice and salt, spread on toast.",
+            "Fry the egg to your liking, place on top.",
+            "Finish with a pinch of red pepper flakes if you like a little heat.",
+        ],
+    },
+    {
+        "id": "slow_cooker_chili",
+        "title": "Slow Cooker Chili",
+        "servings": 6,
+        "cooking_time": 240,
+        "ingredients": [
+            {"name": "ground beef", "quantity": 1, "unit": "POUND"},
+            {"name": "kidney beans", "quantity": 2, "unit": "CAN"},
+            {"name": "diced tomatoes", "quantity": 2, "unit": "CAN"},
+            {"name": "yellow onion", "quantity": 1, "unit": "EACH"},
+            {"name": "chili powder", "quantity": 2, "unit": "TABLESPOON"},
+            {"name": "cumin", "quantity": 1, "unit": "TABLESPOON"},
+            {"name": "garlic", "quantity": 2, "unit": "CLOVE"},
+        ],
+        "instructions": [
+            "Brown the ground beef with diced onion and garlic, drain excess fat.",
+            "Add to a slow cooker with beans, tomatoes, chili powder, and cumin.",
+            "Cook on low 6-8 hours, or high 3-4 hours. Real hands-off time for a busy day.",
+        ],
+    },
+]
+
 
 GUIDES = [
     {"id": "recovery-basics", "topic": "Recovery", "title": "Your body after birth",
@@ -1191,6 +1439,13 @@ class RecoveryCheckinCreate(BaseModel):
     pelvic_floor_done: Optional[bool] = None  # did she do pelvic floor/kegel exercises today
     diastasis_check: Optional[str] = None  # not_checked / no_gap / small_gap / large_gap — self-guided check result, not a diagnosis
     note: Optional[str] = None
+
+
+class MomWellnessLogCreate(BaseModel):
+    device_id: str
+    kind: str                              # water / medication
+    medication_name: Optional[str] = None  # e.g. "prenatal vitamin", "pain medication" — her own words, not a drug database
+    at: Optional[str] = None
 
 
 class ProfileApptUpdate(BaseModel):
@@ -2220,6 +2475,117 @@ async def leave_space(a: SpaceAction):
 
 
 # ----- Guides & resources (culturally-aware) -----
+@api_router.get("/homely/recipes")
+async def homely_recipes():
+    """Summary list only, not full ingredients — matches how the Instacart
+    Create Recipe Page endpoint is meant to be called: once per recipe,
+    right when she actually wants to shop it, not preloaded for all of
+    them up front."""
+    return [
+        {"id": r["id"], "title": r["title"], "servings": r["servings"], "cooking_time": r["cooking_time"]}
+        for r in HOMELY_RECIPES
+    ]
+
+
+@api_router.get("/homely/recipes/{recipe_id}")
+async def homely_recipe_detail(recipe_id: str):
+    recipe = next((r for r in HOMELY_RECIPES if r["id"] == recipe_id), None)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return recipe
+
+
+@api_router.post("/homely/recipes/{recipe_id}/shop")
+async def homely_recipe_shop(recipe_id: str):
+    """Sends the recipe's real ingredients to Instacart's Create Recipe
+    Page endpoint and returns a real shoppable link. The link opens the
+    actual Instacart app directly (confirmed supported on both iOS and
+    Android), with these ingredients already in the cart for her to pick
+    a store and check out on Instacart's own side."""
+    recipe = next((r for r in HOMELY_RECIPES if r["id"] == recipe_id), None)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return await _create_instacart_recipe_link(recipe, only_ingredient_names=None)
+
+
+class ShopMissingRequest(BaseModel):
+    missing_ingredients: List[str]
+
+
+@api_router.post("/homely/recipes/{recipe_id}/shop-missing")
+async def homely_recipe_shop_missing(recipe_id: str, body: ShopMissingRequest):
+    """Same real Instacart link, but scoped to just the specific
+    ingredients the grocery-photo scan identified as actually missing,
+    using this recipe's own real quantities rather than asking the AI to
+    guess amounts a second time."""
+    recipe = next((r for r in HOMELY_RECIPES if r["id"] == recipe_id), None)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    if not body.missing_ingredients:
+        raise HTTPException(status_code=400, detail="No missing ingredients were provided")
+    return await _create_instacart_recipe_link(recipe, only_ingredient_names=body.missing_ingredients)
+
+
+async def _create_instacart_recipe_link(recipe: dict, only_ingredient_names: Optional[List[str]]) -> dict:
+    if not INSTACART_API_KEY:
+        raise HTTPException(status_code=503, detail="Instacart isn't connected yet, an admin needs to add an API key")
+
+    ingredients = recipe["ingredients"]
+    if only_ingredient_names:
+        wanted = {n.lower() for n in only_ingredient_names}
+        ingredients = [ing for ing in ingredients if ing["name"].lower() in wanted]
+        if not ingredients:
+            # The scan's item names didn't match this recipe's real
+            # ingredient names closely enough — fall back to the full
+            # list rather than silently sending Instacart an empty cart.
+            ingredients = recipe["ingredients"]
+
+    payload = {
+        "title": recipe["title"],
+        "servings": recipe["servings"],
+        "cooking_time": recipe["cooking_time"],
+        "instructions": [line for line in recipe["instructions"]],
+        "ingredients": [
+            {
+                "name": ing["name"],
+                "measurements": [{"quantity": ing["quantity"], "unit": ing["unit"]}],
+            }
+            for ing in ingredients
+        ],
+        "expires_in": 30,
+        "landing_page_configuration": {"partner_linkback_url": "https://project-x-flame-gamma.vercel.app"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{INSTACART_BASE_URL}/idp/v1/products/recipe",
+                headers={"Authorization": f"Bearer {INSTACART_API_KEY}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            if resp.status_code >= 300:
+                logger.warning(f"Instacart recipe page failed: {resp.status_code} {resp.text[:300]}")
+                raise HTTPException(status_code=502, detail="Couldn't reach Instacart right now, please try again")
+            data = resp.json()
+            # Instacart's docs consistently describe "returns a URL in the
+            # response" but I couldn't confirm the exact field name from
+            # documentation alone, not enough to trust a single guess.
+            # Checking the plausible options rather than risking a silent
+            # None on launch day. Once real credentials exist, log the
+            # actual response once and simplify this to the real field.
+            shopping_url = (
+                data.get("products_link_url") or data.get("url")
+                or data.get("link") or data.get("recipe_url")
+            )
+            if not shopping_url:
+                logger.warning(f"Instacart response had no recognized URL field: {data}")
+                raise HTTPException(status_code=502, detail="Got a response from Instacart but couldn't find the shopping link in it")
+            return {"shopping_url": shopping_url}
+    except httpx.HTTPError:
+        logger.exception("Instacart request failed")
+        raise HTTPException(status_code=502, detail="Couldn't reach Instacart right now, please try again")
+
+
 @api_router.get("/guides")
 async def guides(culture: Optional[str] = None):
     out = []
@@ -2485,6 +2851,54 @@ async def recovery_report(device_id: str, days: int = 14):
     return {"report_text": "\n".join(lines)}
 
 
+@api_router.post("/mom-wellness")
+async def mom_wellness_log(w: MomWellnessLogCreate):
+    """Water and medication logging, kept deliberately simple: a cup count
+    and a name she chooses herself, not a drug database or calorie count."""
+    doc = {
+        "device_id": w.device_id,
+        "kind": w.kind,
+        "medication_name": w.medication_name,
+        "at": w.at or now_iso(),
+    }
+    await db.mom_wellness_logs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/mom-wellness/{device_id}/today")
+async def mom_wellness_today(device_id: str):
+    today = datetime.now(timezone.utc).date().isoformat()
+    logs = await db.mom_wellness_logs.find(
+        {"device_id": device_id, "at": {"$gte": today}}, {"_id": 0}
+    ).to_list(200)
+    water_count = sum(1 for l in logs if l["kind"] == "water")
+    medications = [l["medication_name"] for l in logs if l["kind"] == "medication" and l.get("medication_name")]
+    return {"water_cups": water_count, "medications_taken": medications}
+
+
+@api_router.get("/mom-wellness/{device_id}/medication-names")
+async def mom_wellness_medication_names(device_id: str, days: int = 14):
+    """Her own regularly-used medication names, from her real recent
+    history, so logging becomes a quick tap instead of retyping each time."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    names = await db.mom_wellness_logs.distinct(
+        "medication_name", {"device_id": device_id, "kind": "medication", "at": {"$gte": cutoff}}
+    )
+    return [n for n in names if n]
+
+
+@api_router.get("/caregiver-rest/{device_id}/predictions")
+async def caregiver_rest_predictions(device_id: str):
+    """Her own sleep pattern prediction, personal to this specific
+    caregiver, not combined across the household the way baby's logs are.
+    Reuses the same real wake-window math already built and tested for
+    baby's nap predictions."""
+    logs = await db.caregiver_rest_logs.find({"device_id": device_id}, {"_id": 0}).to_list(50)
+    prediction = _predict_next_sleep(logs, age_fallback_minutes=None)
+    return {"sleep": prediction}
+
+
 @api_router.patch("/profile/appointment")
 async def update_appointment(u: ProfileApptUpdate):
     await db.profiles.update_one(
@@ -2689,6 +3103,11 @@ EVENT_CATEGORIES = [
 
 
 class EventExtractRequest(BaseModel):
+    image_base64: str
+    media_type: str = "image/jpeg"
+
+
+class GroceryScanRequest(BaseModel):
     image_base64: str
     media_type: str = "image/jpeg"
 
@@ -3133,6 +3552,57 @@ async def extract_event_from_photo(req: EventExtractRequest):
         raise HTTPException(status_code=502, detail=f"Extraction failed: {e}")
 
 
+@api_router.post("/homely/scan-groceries")
+async def scan_groceries(req: GroceryScanRequest):
+    """Reads a photo of what she actually has, matches it against the real
+    curated recipes, and separates what she already has from what she'd
+    genuinely still need, so the Instacart link that follows only asks
+    for the real gap, not the whole recipe from scratch."""
+    if not anthropic_client:
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+
+    recipe_context = "\n".join(
+        f"- {r['id']}: {r['title']} (ingredients: {', '.join(i['name'] for i in r['ingredients'])})"
+        for r in HOMELY_RECIPES
+    )
+    prompt = (
+        "This photo shows groceries or ingredients she actually has right now. "
+        "First, identify the real food items visible. Then, from this list of available recipes, "
+        f"pick whichever one she could make with the LEAST additional shopping:\n{recipe_context}\n\n"
+        "Respond with ONLY a JSON object (no markdown, no other text) with these exact keys: "
+        '{"identified_items": [string, ...] (what you actually see in the photo), '
+        '"suggested_recipe_id": string (the id from the list above), '
+        '"have_ingredients": [string, ...] (which of that recipe\'s ingredients she appears to already have), '
+        '"missing_ingredients": [string, ...] (which of that recipe\'s ingredients are NOT visible in the photo)}. '
+        "If nothing in the photo looks food-related, set suggested_recipe_id to null."
+    )
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=500,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": req.media_type, "data": req.image_base64}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+
+        recipe = next((r for r in HOMELY_RECIPES if r["id"] == parsed.get("suggested_recipe_id")), None)
+        if recipe:
+            parsed["suggested_recipe"] = {"id": recipe["id"], "title": recipe["title"]}
+        return parsed
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Couldn't read that clearly, try a clearer photo")
+    except Exception as e:
+        logger.exception("grocery scan failed")
+        raise HTTPException(status_code=502, detail=f"Scan failed: {e}")
+
+
 @api_router.post("/events")
 async def create_event(e: PersonalEventCreate):
     event_id = uuid.uuid4().hex[:10]
@@ -3490,6 +3960,7 @@ async def delete_account(device_id: str):
         "push_tokens", "recovery_checkins", "self_nudge_tracker", "shop_items",
         "shop_thread_messages", "sos_events", "weekly_insights", "peer_rooms",
         "caregiver_rest_logs", "predictive_sleep_nudge_tracker", "predictive_poop_nudge_tracker",
+        "mom_wellness_logs",
     ]
     for coll_name in direct_collections:
         coll = getattr(db, coll_name)
@@ -3503,6 +3974,20 @@ async def delete_account(device_id: str):
     session_result = await db.active_sleep_sessions.delete_many({"owner_device_id": device_id})
     if session_result.deleted_count:
         deleted_counts["active_sleep_sessions"] = session_result.deleted_count
+
+    # encouragement_messages and its nudge tracker use to_device_id/
+    # from_device_id/for_device_id, none of them plain device_id, so this
+    # needs its own explicit handling too, not the generic loop above.
+    encouragement_result = await db.encouragement_messages.delete_many(
+        {"$or": [{"from_device_id": device_id}, {"to_device_id": device_id}]}
+    )
+    if encouragement_result.deleted_count:
+        deleted_counts["encouragement_messages"] = encouragement_result.deleted_count
+    tracker_result = await db.encouragement_nudge_tracker.delete_many(
+        {"$or": [{"to_device_id": device_id}, {"for_device_id": device_id}]}
+    )
+    if tracker_result.deleted_count:
+        deleted_counts["encouragement_nudge_tracker"] = tracker_result.deleted_count
 
     # Households: remove her as a member; delete the household entirely
     # only if that leaves it empty.

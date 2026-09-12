@@ -177,6 +177,22 @@ export const api = {
   recoveryCheckin: (body: any) => req(`/recovery/checkin`, { method: "POST", body: JSON.stringify(body) }),
   recoveryCheckins: (deviceId: string) => req(`/recovery/checkins/${deviceId}`),
   recoveryReport: (deviceId: string, days = 14) => req(`/recovery/${deviceId}/report?days=${days}`),
+  momWellnessLog: (deviceId: string, kind: "water" | "medication", medicationName?: string) =>
+    req(`/mom-wellness`, { method: "POST", body: JSON.stringify({ device_id: deviceId, kind, medication_name: medicationName }) }),
+  momWellnessToday: (deviceId: string) => req(`/mom-wellness/${deviceId}/today`),
+  momWellnessMedicationNames: (deviceId: string) => req(`/mom-wellness/${deviceId}/medication-names`),
+  caregiverRestPredictions: (deviceId: string) => req(`/caregiver-rest/${deviceId}/predictions`),
+  homelyRecipes: () => req(`/homely/recipes`),
+  homelyRecipeDetail: (recipeId: string) => req(`/homely/recipes/${recipeId}`),
+  homelyRecipeShop: (recipeId: string) => req(`/homely/recipes/${recipeId}/shop`, { method: "POST" }),
+  homelyScanGroceries: (imageBase64: string, mediaType = "image/jpeg") =>
+    req(`/homely/scan-groceries`, { method: "POST", body: JSON.stringify({ image_base64: imageBase64, media_type: mediaType }) }),
+  homelyShopMissing: (recipeId: string, missingIngredients: string[]) =>
+    req(`/homely/recipes/${recipeId}/shop-missing`, { method: "POST", body: JSON.stringify({ missing_ingredients: missingIngredients }) }),
+  sendEncouragement: (fromDeviceId: string, toDeviceId: string, message: string) =>
+    req(`/encouragement`, { method: "POST", body: JSON.stringify({ from_device_id: fromDeviceId, to_device_id: toDeviceId, message }) }),
+  latestEncouragement: (deviceId: string) => req(`/encouragement/${deviceId}/latest`),
+  markEncouragementSeen: (deviceId: string) => req(`/encouragement/${deviceId}/mark-seen`, { method: "POST" }),
   recoveryTimeline: (deviceId: string) => req(`/recovery/timeline/${deviceId}`),
   recoveryToday: (deviceId: string) => req(`/recovery/today/${deviceId}`),
   updateAppointment: (deviceId: string, done: boolean) =>

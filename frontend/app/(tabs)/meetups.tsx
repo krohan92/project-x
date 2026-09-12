@@ -17,6 +17,8 @@ import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
 import { FirstTimeHint } from "@/src/components/FirstTimeHint";
+import { MeetupSafetyModal } from "@/src/components/MeetupSafetyModal";
+import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
@@ -126,6 +128,8 @@ export default function Meetups() {
   const [timeLabel, setTimeLabel] = useState("10:00 AM");
   const [description, setDescription] = useState("");
   const [posting, setPosting] = useState(false);
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
+  const [pendingMeetupId, setPendingMeetupId] = useState<string | null>(null);
 
   const load = useCallback(async (n: string, c: string) => {
     try {
@@ -219,8 +223,18 @@ export default function Meetups() {
       } catch {}
       await load(neighborhood, category);
       // Land right on the invite screen — creating a meetup with no one
-      // else in it isn't useful until it's actually shared.
-      if (created?.meetup_id) router.push(`/meetup/${created.meetup_id}`);
+      // else in it isn't useful until it's actually shared. Show the
+      // safety tips once, ever, right before that first real meetup
+      // commitment, rather than repeating it every single time.
+      const seenSafety = await storage.getItem<boolean>("meetup_safety_seen", false);
+      if (created?.meetup_id) {
+        if (!seenSafety) {
+          setPendingMeetupId(created.meetup_id);
+          setShowSafetyModal(true);
+        } else {
+          router.push(`/meetup/${created.meetup_id}`);
+        }
+      }
     } catch {}
     setPosting(false);
   };
@@ -468,6 +482,16 @@ export default function Meetups() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <MeetupSafetyModal
+        visible={showSafetyModal}
+        onClose={async () => {
+          setShowSafetyModal(false);
+          await storage.setItem("meetup_safety_seen", true);
+          if (pendingMeetupId) router.push(`/meetup/${pendingMeetupId}`);
+          setPendingMeetupId(null);
+        }}
+      />
     </View>
   );
 }

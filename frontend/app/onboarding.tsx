@@ -199,7 +199,7 @@ export default function Onboarding() {
             const idx = Math.round(e.nativeEvent.contentOffset.x / e.nativeEvent.layoutMeasurement.width);
             setFeatureCard(idx);
           }}
-          style={{ flexGrow: 0 }}
+          style={{ flexGrow: 0, marginHorizontal: -spacing.lg }}
         >
           {FEATURE_CARDS.map((card) => (
             <View key={card.title} style={[styles.introCardWrap, { width: screenWidth }]}>

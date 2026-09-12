@@ -12,6 +12,7 @@ import Animated, {
   Easing,
   FadeIn,
 } from "react-native-reanimated";
+import { useKeepAwake } from "expo-keep-awake";
 
 import { Txt } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
@@ -28,7 +29,7 @@ const TECHNIQUES: Technique[] = [
   {
     id: "calm",
     name: "Calm Breathing",
-    blurb: "Steady and soothing — a gentle default for most moments",
+    blurb: "Steady and soothing, a gentle default for most moments",
     icon: "feather",
     phases: [
       { label: "Breathe in", dur: 4000, scale: 1 },
@@ -39,7 +40,7 @@ const TECHNIQUES: Technique[] = [
   {
     id: "box",
     name: "Box Breathing",
-    blurb: "Equal counts on every side — grounding when things feel scattered",
+    blurb: "Equal counts on every side, grounding when things feel scattered",
     icon: "square",
     phases: [
       { label: "Breathe in", dur: 4000, scale: 1 },
@@ -62,7 +63,7 @@ const TECHNIQUES: Technique[] = [
   {
     id: "quick",
     name: "Quick Reset",
-    blurb: "Short and simple — for when you only have a minute",
+    blurb: "Short and simple, for when you only have a minute",
     icon: "zap",
     phases: [
       { label: "Breathe in", dur: 3000, scale: 1 },
@@ -113,7 +114,7 @@ function TechniquePicker({
       contentContainerStyle={{ paddingTop: insets.top + spacing["2xl"] + spacing.lg, padding: spacing.lg, gap: spacing.md }}
     >
       <Txt display style={styles.pickerTitle}>Take a breathing moment</Txt>
-      <Txt style={styles.pickerSub}>Pick whatever fits how you're feeling right now — there's no wrong choice.</Txt>
+      <Txt style={styles.pickerSub}>Pick whatever fits how you're feeling right now, there's no wrong choice.</Txt>
 
       {TECHNIQUES.map((t) => (
         <Pressable
@@ -140,6 +141,11 @@ function TechniquePicker({
 }
 
 function BreathingSession({ technique }: { technique: Technique }) {
+  // Keeps the screen from dimming/locking while she's actively following
+  // the breathing circle. Automatically turns back off the moment she
+  // leaves this screen, so it doesn't affect battery/normal use otherwise.
+  useKeepAwake();
+
   const scale = useSharedValue(technique.phases[technique.phases.length - 1].scale);
   const [phase, setPhase] = useState(0);
   const [cycles, setCycles] = useState(0);

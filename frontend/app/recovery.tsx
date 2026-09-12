@@ -40,6 +40,10 @@ export default function Recovery() {
   const [warningSigns, setWarningSigns] = useState<any[]>([]);
   const [recent, setRecent] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<any | null>(null);
+  const [waterCups, setWaterCups] = useState(0);
+  const [todaysMedications, setTodaysMedications] = useState<string[]>([]);
+  const [knownMedications, setKnownMedications] = useState<string[]>([]);
+  const [newMedication, setNewMedication] = useState("");
   const [pain, setPain] = useState<number | null>(null);
   const [bleeding, setBleeding] = useState<string | null>(null);
   const [incision, setIncision] = useState<string | null>(null);
@@ -60,6 +64,11 @@ export default function Recovery() {
     if (deviceId) {
       api.recoveryCheckins(deviceId).then(setRecent).catch(() => {});
       api.recoveryTimeline(deviceId).then(setTimeline).catch(() => {});
+      api.momWellnessToday(deviceId).then((w) => {
+        setWaterCups(w.water_cups || 0);
+        setTodaysMedications(w.medications_taken || []);
+      }).catch(() => {});
+      api.momWellnessMedicationNames(deviceId).then(setKnownMedications).catch(() => {});
     }
   }, [deviceId]);
 
@@ -136,6 +145,81 @@ export default function Recovery() {
             </Txt>
           </Card>
         )}
+
+        <View>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Txt weight="500" style={styles.q}>Water today</Txt>
+            <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>{waterCups} {waterCups === 1 ? "cup" : "cups"}</Txt>
+          </View>
+          <Pressable
+            testID="log-water-cup"
+            onPress={async () => {
+              if (!deviceId) return;
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              await api.momWellnessLog(deviceId, "water");
+              setWaterCups((c) => c + 1);
+            }}
+            style={styles.waterButton}
+          >
+            <Feather name="plus" size={18} color={colors.brand} />
+            <Txt style={{ color: colors.brand }} weight="500">Log a cup of water</Txt>
+          </Pressable>
+        </View>
+
+        <View>
+          <Txt weight="500" style={styles.q}>Medications</Txt>
+          {todaysMedications.length > 0 && (
+            <View style={{ marginBottom: spacing.sm }}>
+              {todaysMedications.map((m, i) => (
+                <Txt key={i} style={{ color: colors.muted, fontSize: fontSize.sm }}>✓ {m} taken today</Txt>
+              ))}
+            </View>
+          )}
+          {knownMedications.length > 0 && (
+            <View style={[styles.chipWrap, { marginBottom: spacing.sm }]}>
+              {knownMedications.filter((m) => !todaysMedications.includes(m)).map((m) => (
+                <Pressable
+                  key={m}
+                  testID={`log-known-med-${m}`}
+                  onPress={async () => {
+                    if (!deviceId) return;
+                    Haptics.selectionAsync();
+                    await api.momWellnessLog(deviceId, "medication", m);
+                    setTodaysMedications((prev) => [...prev, m]);
+                  }}
+                  style={styles.chip}
+                >
+                  <Txt style={{ color: colors.onSurfaceSecondary }}>+ {m}</Txt>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <TextInput
+              testID="new-medication-input"
+              value={newMedication}
+              onChangeText={setNewMedication}
+              placeholder="e.g. prenatal vitamin, pain medication"
+              placeholderTextColor={colors.muted}
+              style={[styles.input, { flex: 1 }]}
+            />
+            <Pressable
+              testID="log-new-medication"
+              onPress={async () => {
+                const name = newMedication.trim();
+                if (!name || !deviceId) return;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                await api.momWellnessLog(deviceId, "medication", name);
+                setTodaysMedications((prev) => [...prev, name]);
+                if (!knownMedications.includes(name)) setKnownMedications((prev) => [...prev, name]);
+                setNewMedication("");
+              }}
+              style={styles.customAreaConfirm}
+            >
+              <Feather name="check" size={18} color={colors.onBrandPrimary} />
+            </Pressable>
+          </View>
+        </View>
 
         <View>
           <Txt weight="500" style={styles.q}>Pain level today</Txt>
@@ -382,6 +466,34 @@ const styles = StyleSheet.create({
   guideCard: {
     marginTop: spacing.sm,
     backgroundColor: colors.surfaceSecondary,
+  },
+  waterButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  input: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  customAreaConfirm: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandPrimary,
+    alignItems: "center",
+    justifyContent: "center",
   },
   timelineCard: {
     backgroundColor: colors.brandTertiary + "25",

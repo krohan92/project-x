@@ -10,6 +10,8 @@ import { Txt, Card, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
+import { MeetupSafetyModal } from "@/src/components/MeetupSafetyModal";
+import { storage } from "@/src/utils/storage";
 
 function dayLabel(iso: string) {
   const d = new Date(iso + "T00:00:00");
@@ -34,6 +36,7 @@ export default function MeetupDetail() {
 
   const [meetup, setMeetup] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [reflectMood, setReflectMood] = useState<number | null>(null);
   const [reflectNote, setReflectNote] = useState("");
   const [reflectSubmitting, setReflectSubmitting] = useState(false);
@@ -58,6 +61,10 @@ export default function MeetupDetail() {
     try {
       const m = await api.rsvpMeetup(meetup.meetup_id, { device_id: deviceId, name: profile?.name || "A mom" });
       setMeetup(m);
+      // Same shared key as creating a meetup — shows once ever, whichever
+      // action happens first, not repeated on both sides separately.
+      const seenSafety = await storage.getItem<boolean>("meetup_safety_seen", false);
+      if (!seenSafety) setShowSafetyModal(true);
     } catch {}
     setBusy(false);
   };
@@ -219,6 +226,14 @@ export default function MeetupDetail() {
           </Animated.View>
         )}
       </ScrollView>
+
+      <MeetupSafetyModal
+        visible={showSafetyModal}
+        onClose={async () => {
+          setShowSafetyModal(false);
+          await storage.setItem("meetup_safety_seen", true);
+        }}
+      />
     </View>
   );
 }
