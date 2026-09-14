@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
-      "buildNumber": "20",
+      "buildNumber": "30",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
       }
