@@ -189,6 +189,8 @@ export const api = {
     req(`/homely/scan-groceries`, { method: "POST", body: JSON.stringify({ image_base64: imageBase64, media_type: mediaType }) }),
   homelyShopMissing: (recipeId: string, missingIngredients: string[]) =>
     req(`/homely/recipes/${recipeId}/shop-missing`, { method: "POST", body: JSON.stringify({ missing_ingredients: missingIngredients }) }),
+  homelyMatchRecipe: (identifiedItems: string[], excludeRecipeIds: string[] = []) =>
+    req(`/homely/match-recipe`, { method: "POST", body: JSON.stringify({ identified_items: identifiedItems, exclude_recipe_ids: excludeRecipeIds }) }),
   sendEncouragement: (fromDeviceId: string, toDeviceId: string, message: string) =>
     req(`/encouragement`, { method: "POST", body: JSON.stringify({ from_device_id: fromDeviceId, to_device_id: toDeviceId, message }) }),
   latestEncouragement: (deviceId: string) => req(`/encouragement/${deviceId}/latest`),

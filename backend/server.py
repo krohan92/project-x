@@ -3112,6 +3112,11 @@ class GroceryScanRequest(BaseModel):
     media_type: str = "image/jpeg"
 
 
+class MatchRecipeRequest(BaseModel):
+    identified_items: List[str]
+    exclude_recipe_ids: List[str] = []
+
+
 class PersonalEventCreate(BaseModel):
     device_id: str
     title: str
@@ -3601,6 +3606,52 @@ async def scan_groceries(req: GroceryScanRequest):
     except Exception as e:
         logger.exception("grocery scan failed")
         raise HTTPException(status_code=502, detail=f"Scan failed: {e}")
+
+
+@api_router.post("/homely/match-recipe")
+async def match_recipe(req: MatchRecipeRequest):
+    """Re-matches an already-identified pantry photo against a different
+    recipe, so 'try another recipe' doesn't need a new photo or another
+    vision call, just a fresh pick against the same known items."""
+    if not anthropic_client:
+        raise HTTPException(status_code=503, detail="AI service unavailable")
+
+    candidates = [r for r in HOMELY_RECIPES if r["id"] not in req.exclude_recipe_ids]
+    if not candidates:
+        candidates = HOMELY_RECIPES  # exhausted the list, start the cycle over
+
+    recipe_context = "\n".join(
+        f"- {r['id']}: {r['title']} (ingredients: {', '.join(i['name'] for i in r['ingredients'])})"
+        for r in candidates
+    )
+    items_context = ", ".join(req.identified_items) if req.identified_items else "nothing specific"
+    prompt = (
+        f"She has these items available: {items_context}. "
+        f"From this list of recipes, pick whichever one she could make with the LEAST additional shopping:\n{recipe_context}\n\n"
+        "Respond with ONLY a JSON object (no markdown, no other text) with these exact keys: "
+        '{"suggested_recipe_id": string (the id from the list above), '
+        '"have_ingredients": [string, ...] (which of that recipe\'s ingredients she appears to already have, based on her available items), '
+        '"missing_ingredients": [string, ...] (which of that recipe\'s ingredients are NOT in her available items)}.'
+    )
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+
+        recipe = next((r for r in HOMELY_RECIPES if r["id"] == parsed.get("suggested_recipe_id")), None)
+        if recipe:
+            parsed["suggested_recipe"] = {"id": recipe["id"], "title": recipe["title"]}
+        return parsed
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Couldn't match a recipe just now, try again")
+    except Exception as e:
+        logger.exception("recipe re-match failed")
+        raise HTTPException(status_code=502, detail=f"Match failed: {e}")
 
 
 @api_router.post("/events")
