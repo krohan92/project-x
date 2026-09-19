@@ -38,6 +38,29 @@ anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHRO
 # ----- Auth -----
 JWT_SECRET = os.environ.get('JWT_SECRET')  # REQUIRED in production — see .env.example
 ADMIN_BROADCAST_KEY = os.environ.get('ADMIN_BROADCAST_KEY')  # required to send an announcement push to every user
+CRON_SECRET = os.environ.get('CRON_SECRET')  # required to trigger the scheduled nudge sweep
+
+
+class WaitlistSignup(BaseModel):
+    email: EmailStr
+    source: str = "coming_soon"
+
+
+@api_router.post("/waitlist")
+async def join_waitlist(body: WaitlistSignup):
+    """Public, unauthenticated signup for the coming-soon page. Dedupes on
+    email so refreshing/resubmitting the form doesn't create duplicates,
+    and always returns success even on a repeat signup — no reason to leak
+    whether an email was already on the list to whoever's submitting it."""
+    existing = await db.waitlist.find_one({"email": body.email})
+    if existing:
+        return {"status": "already_registered"}
+    await db.waitlist.insert_one({
+        "email": body.email,
+        "source": body.source,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"status": "added"}
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 90
 APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
@@ -940,28 +963,61 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
 
 
 async def _recent_pattern_summary(device_id: str) -> str:
-    """A short, factual summary of her last few days — for grounding
-    'what should I do' type answers in what she's actually logged, not
-    guessing. This reflects her own self-reported data back to her; it
-    never labels or diagnoses a mental state."""
+    """A short, factual summary of her last few days across features — for
+    grounding 'what should I do' type answers in what she's actually
+    logged and experiencing, not guessing. Pulls from mood check-ins,
+    Recovery, and Tag Team so Talk to Cuddle has the same picture the rest
+    of the app does, instead of starting fresh every conversation. This
+    reflects her own self-reported data back to her; it never labels or
+    diagnoses a mental state."""
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    parts = []
+
+    # ---- mood trend (existing signal) ----
     moods = await db.moods.find(
         {"device_id": device_id, "created_at": {"$gte": week_ago}}, {"_id": 0}
     ).sort("created_at", 1).to_list(20)
-    if not moods:
-        return ""
     scores = [m["mood"] for m in moods if m.get("mood") is not None]
-    if not scores:
+    if scores:
+        recent_avg = sum(scores[-3:]) / len(scores[-3:])
+        trend = ""
+        if len(scores) >= 5:
+            earlier_avg = sum(scores[:-3]) / max(1, len(scores[:-3]))
+            if recent_avg < earlier_avg - 0.7:
+                trend = ", trending lower than earlier this week"
+            elif recent_avg > earlier_avg + 0.7:
+                trend = ", trending better than earlier this week"
+        parts.append(f"Her self-reported mood over the last few check-ins has averaged about {recent_avg:.1f}/5{trend}.")
+
+    # ---- recent Recovery check-in ----
+    recovery = await db.recovery_checkins.find_one(
+        {"device_id": device_id, "created_at": {"$gte": three_days_ago}},
+        {"_id": 0}, sort=[("created_at", -1)]
+    )
+    if recovery:
+        bits = []
+        if recovery.get("pain_level"):
+            bits.append(f"pain level {recovery['pain_level']}/5")
+        if recovery.get("bleeding_level") and recovery["bleeding_level"] != "none":
+            bits.append(f"{recovery['bleeding_level']} bleeding")
+        if recovery.get("symptoms"):
+            bits.append(f"flagged symptoms: {', '.join(recovery['symptoms'])}")
+        if bits:
+            parts.append(f"Her most recent Recovery check-in (within the last few days) noted: {', '.join(bits)}.")
+
+    # ---- Tag Team / on-duty status ----
+    household = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    if household and household.get("on_duty_device_id") == device_id:
+        on_duty_since = household.get("on_duty_since") or household.get("created_at")
+        if on_duty_since:
+            hours = _hours_between(on_duty_since, now_iso())
+            if hours >= 3:
+                parts.append(f"She's been on duty for about {round(hours)} hours straight, according to Tag Team.")
+
+    if not parts:
         return ""
-    recent_avg = sum(scores[-3:]) / len(scores[-3:])
-    trend = ""
-    if len(scores) >= 5:
-        earlier_avg = sum(scores[:-3]) / max(1, len(scores[:-3]))
-        if recent_avg < earlier_avg - 0.7:
-            trend = ", trending lower than earlier this week"
-        elif recent_avg > earlier_avg + 0.7:
-            trend = ", trending better than earlier this week"
-    return f"Her self-reported mood over the last few check-ins has averaged about {recent_avg:.1f}/5{trend}."
+    return " ".join(parts)
 
 
 @api_router.post("/chat")
@@ -2181,6 +2237,62 @@ async def broadcast_announcement(a: BroadcastAnnouncement):
 
     await db.broadcast_attempts.insert_one({"outcome": "sent", "at": now.isoformat(), "title": a.title})
     return {"attempted": len(device_ids)}
+
+
+@api_router.post("/cron/tick")
+async def cron_tick(x_cron_secret: str = Header(None)):
+    """Runs the same nudge checks that used to only fire when the app
+    happened to be open and polled the right endpoint — Tag Team fatigue,
+    predicted feed/sleep/diaper timing, the self check-in reminder,
+    upcoming event reminders, and now a proactive AI check-in — on a real,
+    independent schedule instead.
+
+    Meant to be hit every few minutes by an external scheduler (Railway's
+    Cron Job service, or any free cron pinger) hitting this URL with the
+    CRON_SECRET header set. Reuses the exact same per-device functions the
+    app itself calls, so the nudge logic and its rate-limiting/dedup
+    tracking live in exactly one place, not two copies that could drift.
+    """
+    if not CRON_SECRET or not _secrets.compare_digest(x_cron_secret or "", CRON_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid cron secret")
+
+    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "errors": 0}
+
+    # Tag Team fatigue nudges only apply to households with a second member
+    # to actually notify.
+    households = await db.households.find({"members.1": {"$exists": True}}).to_list(10000)
+    for h in households:
+        try:
+            await compute_handoff_score(h)
+            results["tag_team"] += 1
+        except Exception:
+            logger.exception("cron: tag team check failed for household %s", h.get("household_code"))
+            results["errors"] += 1
+
+    # Everything else is per-device. Only devices with a registered push
+    # token can receive anything anyway, so that's the natural device list
+    # for this sweep, rather than every device that's ever used the app.
+    token_docs = await db.push_tokens.find({}, {"_id": 0, "device_id": 1}).to_list(100000)
+    device_ids = [t["device_id"] for t in token_docs]
+
+    for device_id in device_ids:
+        checks = [
+            ("feed", predictive_feed_nudge),
+            ("sleep", predictive_sleep_nudge),
+            ("poop", predictive_poop_nudge),
+            ("wellbeing", wellbeing_self_check),
+            ("events", check_event_reminders),
+            ("proactive", proactive_ai_checkin),
+        ]
+        for key, fn in checks:
+            try:
+                await fn(device_id)
+                results[key] += 1
+            except Exception:
+                logger.exception("cron: %s check failed for device %s", key, device_id)
+                results["errors"] += 1
+
+    return results
 
 
 def _make_household_code() -> str:
@@ -3844,6 +3956,65 @@ async def wellbeing_self_check(device_id: str):
 
 # ----- Predictive nudge: turns the feed prediction into an actual heads-up
 # push instead of something she only sees if she happens to open Track. -----
+async def proactive_ai_checkin(device_id: str) -> dict:
+    """The 'reach out first' half of the AI companion, instead of only ever
+    responding when she happens to open Talk to Cuddle herself. Looks at
+    the same cross-feature signals the chat's system prompt now uses
+    (mood trend, Recovery flags, Tag Team fatigue) and, only when more than
+    one paints a concerning picture together, sends a single warm nudge
+    inviting her into a conversation — never diagnostic, never alarming,
+    and rate-limited so it can only fire once per day per device."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    tracker = await db.proactive_checkin_tracker.find_one({"device_id": device_id})
+    if tracker and tracker.get("last_sent_date") == today:
+        return {"nudged": False, "reason": "already sent today"}
+
+    concern_signals = []
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    moods = await db.moods.find(
+        {"device_id": device_id, "created_at": {"$gte": week_ago}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(20)
+    scores = [m["mood"] for m in moods if m.get("mood") is not None]
+    if len(scores) >= 5:
+        recent_avg = sum(scores[-3:]) / len(scores[-3:])
+        earlier_avg = sum(scores[:-3]) / max(1, len(scores[:-3]))
+        if recent_avg < earlier_avg - 0.7:
+            concern_signals.append("mood_dropping")
+
+    three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    recovery = await db.recovery_checkins.find_one(
+        {"device_id": device_id, "created_at": {"$gte": three_days_ago}},
+        {"_id": 0}, sort=[("created_at", -1)]
+    )
+    if recovery and recovery.get("symptoms"):
+        concern_signals.append("recovery_flag")
+
+    household = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
+    if household and household.get("on_duty_device_id") == device_id:
+        on_duty_since = household.get("on_duty_since") or household.get("created_at")
+        if on_duty_since and _hours_between(on_duty_since, now_iso()) >= 6:
+            concern_signals.append("long_duty_stretch")
+
+    # Require at least two independent signals together — a single one
+    # (e.g. one rough mood check-in) is normal and not worth a proactive
+    # push; it's the combination that's worth reaching out about.
+    if len(concern_signals) < 2:
+        return {"nudged": False, "signals": concern_signals}
+
+    await send_push(
+        device_id,
+        "Cuddle",
+        "Things have felt like a lot lately. Want to talk about it for a minute?",
+    )
+    await db.proactive_checkin_tracker.update_one(
+        {"device_id": device_id},
+        {"$set": {"device_id": device_id, "last_sent_date": today, "signals": concern_signals}},
+        upsert=True,
+    )
+    return {"nudged": True, "signals": concern_signals}
+
+
 @api_router.get("/baby-log/{device_id}/predictive-nudge")
 async def predictive_feed_nudge(device_id: str):
     now = datetime.now(timezone.utc)
