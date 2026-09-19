@@ -40,6 +40,17 @@ JWT_SECRET = os.environ.get('JWT_SECRET')  # REQUIRED in production — see .env
 ADMIN_BROADCAST_KEY = os.environ.get('ADMIN_BROADCAST_KEY')  # required to send an announcement push to every user
 CRON_SECRET = os.environ.get('CRON_SECRET')  # required to trigger the scheduled nudge sweep
 
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_DAYS = 90
+APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
+GMAIL_USER = os.environ.get('GMAIL_USER')          # e.g. rohankhanna1992@gmail.com
+GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')  # a Gmail "App Password", not the real password
+INSTACART_API_KEY = os.environ.get('INSTACART_API_KEY')
+INSTACART_BASE_URL = os.environ.get('INSTACART_BASE_URL', 'https://connect.dev.instacart.tools')  # switch to https://connect.instacart.com with a production key when ready to go live
+
+app = FastAPI()
+api_router = APIRouter(prefix="/api")
+
 
 class WaitlistSignup(BaseModel):
     email: EmailStr
@@ -61,16 +72,6 @@ async def join_waitlist(body: WaitlistSignup):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"status": "added"}
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_DAYS = 90
-APPLE_BUNDLE_ID = os.environ.get('APPLE_BUNDLE_ID', 'com.cuddle.postpartum')
-GMAIL_USER = os.environ.get('GMAIL_USER')          # e.g. rohankhanna1992@gmail.com
-GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')  # a Gmail "App Password", not the real password
-INSTACART_API_KEY = os.environ.get('INSTACART_API_KEY')
-INSTACART_BASE_URL = os.environ.get('INSTACART_BASE_URL', 'https://connect.dev.instacart.tools')  # switch to https://connect.instacart.com with a production key when ready to go live
-
-app = FastAPI()
-api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
