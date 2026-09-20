@@ -16,6 +16,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ProfileProvider } from "@/src/lib/profile-context";
 import { LanguageProvider } from "@/src/lib/i18n";
 import { AmbientProvider } from "@/src/lib/ambient-context";
+import { registerSiriIntentHandlers } from "@/src/lib/siri-intents";
 import { colors } from "@/src/theme/theme";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { Quicksand_500Medium } from "@expo-google-fonts/quicksand";
@@ -44,6 +45,20 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [ready]);
+
+  useEffect(() => {
+    // iOS-only — this package has no web or Android implementation at all
+    // (verified directly against its source), so calling it on any other
+    // platform would throw. Guarded here, and the handler itself has its
+    // own try/catch as a second layer of safety.
+    if (Platform.OS === "ios") {
+      try {
+        registerSiriIntentHandlers();
+      } catch (e) {
+        console.log("Siri intent registration failed:", e);
+      }
+    }
+  }, []);
 
   if (!ready) return null;
 

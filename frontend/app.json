@@ -40,6 +40,13 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Cuddle needs your microphone to hear what you say to Talk to Cuddle.",
+          "speechRecognitionPermission": "Cuddle needs speech recognition to turn what you say into text for Talk to Cuddle."
+        }
       ]
     ],
     "experiments": {
