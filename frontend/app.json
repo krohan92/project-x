@@ -2,7 +2,7 @@
   "expo": {
     "name": "Cuddle",
     "slug": "cuddle-postpartum",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "cuddle",
@@ -11,9 +11,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
-      "buildNumber": "30",
+      "buildNumber": "31",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
+        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support",
+        "NSSpeechRecognitionUsageDescription": "Cuddle needs speech recognition to turn what you say into text for Talk to Cuddle.",
+        "NSMicrophoneUsageDescription": "Cuddle needs your microphone to hear what you say to Talk to Cuddle.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -23,7 +26,11 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.cuddle.postpartum",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -51,6 +58,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a41e462b-7569-4e74-a42d-4a095b805102"
+      }
     }
   }
 }
