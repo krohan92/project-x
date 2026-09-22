@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cuddle — Coming Soon</title>
+<meta name="description" content="Cuddle is a postpartum companion app, coming soon. Sign up to be the first to know when new features launch.">
+<link rel="canonical" href="https://cuddlepostpartumsupport.com/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cuddlepostpartumsupport.com/">
+<meta property="og:title" content="Cuddle — Coming Soon">
+<meta property="og:description" content="A postpartum companion built for the stuff nobody prepares you for. Sign up to be first to know.">
+<meta property="og:image" content="https://cuddlepostpartumsupport.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cuddle — Coming Soon">
+<meta name="twitter:image" content="https://cuddlepostpartumsupport.com/og-image.png">
+
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500;1,600&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --surface: #FDFBF7; --on-surface: #2C2925; --surface-2: #F4EFE6;
+    --muted: #8A8178; --border: #EAE3D6; --border-strong: #D5C8B2;
+    --pink: #E8A9BC; --blue: #93B4D6; --brand: #D68C7A;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --surface: #241F1A; --on-surface: #F3EDE3; --surface-2: #2E2721;
+      --muted: #B0A697; --border: #3A3128; --border-strong: #4A3F32;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface: #241F1A; --on-surface: #F3EDE3; --surface-2: #2E2721;
+    --muted: #B0A697; --border: #3A3128; --border-strong: #4A3F32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #FDFBF7 0%, #FBEEF2 40%, #EDF3FA 100%);
+    color: var(--on-surface); font-family: 'Quicksand', system-ui, sans-serif; font-weight: 500;
+    padding: env(safe-area-inset-top,0) 20px env(safe-area-inset-bottom,0);
+  }
+  h1 { font-family: 'Lora', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
+  .wrap { max-width: 480px; width: 100%; text-align: center; padding: 48px 0; }
+
+  .logo { width: 84px; height: 84px; border-radius: 26px; background: #F6F0E4; position: relative; margin: 0 auto 28px; }
+  .logo .c1 { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: var(--pink); left: 8px; top: 15px; }
+  .logo .c2 { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: var(--blue); left: 28px; top: 15px; mix-blend-mode: multiply; }
+  .logo .dot { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: #FDFBF7; left: 36.5px; top: 36.5px; }
+
+  .eyebrow { color: var(--brand); font-weight: 800; font-size: 1.5rem; letter-spacing: 0.04em; margin-bottom: 18px; font-family: 'Lora', serif; }
+  h1 { font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.15; }
+  h1 strong { color: var(--brand); font-weight: 700; }
+  .sub { margin-top: 18px; color: var(--muted); font-size: 1.05rem; line-height: 1.55; }
+
+  form { margin-top: 36px; display: flex; flex-direction: column; gap: 12px; }
+  .input-row { display: flex; gap: 10px; }
+  input[type="email"] {
+    flex: 1; min-width: 0; padding: 15px 18px; border-radius: 999px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--on-surface); font-family: 'Quicksand'; font-size: 1rem; font-weight: 600;
+  }
+  input[type="email"]:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+  button {
+    background: var(--on-surface); color: var(--surface); border: none; padding: 15px 26px;
+    border-radius: 999px; font-family: 'Quicksand'; font-weight: 700; font-size: 1rem; cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+  button:hover { transform: translateY(-1px); }
+  button:disabled { opacity: 0.6; cursor: default; transform: none; }
+
+  .msg { margin-top: 4px; font-size: 0.9rem; min-height: 22px; }
+  .msg.success { color: #5A7A4E; font-weight: 700; }
+  .msg.error { color: #B85C5C; font-weight: 700; }
+
+  .pills { margin-top: 40px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .pill {
+    font-size: 0.82rem; font-weight: 700; color: var(--muted); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 7px 14px;
+  }
+
+  footer { margin-top: 44px; font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="logo"><span class="c1"></span><span class="c2"></span><span class="dot"></span></div>
+
+  <p class="eyebrow">Cuddle</p>
+  <h1>You are never alone. <strong>Cuddle</strong> is always here.</h1>
+  <p class="sub">A postpartum companion built for the stuff nobody prepares you for. We're putting the finishing touches on it, be the first to know when new features drop.</p>
+
+  <form id="waitlist-form">
+    <div class="input-row">
+      <input type="email" id="email-input" placeholder="you@email.com" required autocomplete="email">
+      <button type="submit" id="submit-btn">Notify me</button>
+    </div>
+    <div class="msg" id="form-msg"></div>
+  </form>
+
+  <div class="pills">
+    <span class="pill">Tag Team</span>
+    <span class="pill">Talk to Cuddle</span>
+    <span class="pill">Recovery</span>
+    <span class="pill">Meetups</span>
+    <span class="pill">Pantry Snap</span>
+  </div>
+
+  <footer>Already want the app? <a href="https://apps.apple.com/us/app/cuddle-postpartum-support/id6803365006" style="color:var(--brand); font-weight:700;">Get it free on the App Store →</a></footer>
+</div>
+
+<script>
+  const API_URL = "https://project-x-production-60b7.up.railway.app/api/waitlist";
+  const form = document.getElementById("waitlist-form");
+  const input = document.getElementById("email-input");
+  const btn = document.getElementById("submit-btn");
+  const msg = document.getElementById("form-msg");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = input.value.trim();
+    if (!email) return;
+
+    btn.disabled = true;
+    btn.textContent = "Adding...";
+    msg.textContent = "";
+    msg.className = "msg";
+
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: "coming_soon" }),
+      });
+      if (!res.ok) throw new Error("Request failed");
+      const data = await res.json();
+
+      if (data.status === "already_registered") {
+        msg.textContent = "You're already on the list — we'll be in touch!";
+      } else {
+        msg.textContent = "You're in! We'll email you the moment it's ready.";
+      }
+      msg.classList.add("success");
+      input.value = "";
+      btn.textContent = "Notify me";
+    } catch (err) {
+      msg.textContent = "Something went wrong — mind trying again?";
+      msg.classList.add("error");
+      btn.textContent = "Notify me";
+    }
+    btn.disabled = false;
+  });
+</script>
+
+</body>
+</html>
