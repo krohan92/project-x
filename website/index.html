@@ -418,6 +418,85 @@
 
   .appstore-official-badge { height: 42px; width: auto; display: block; }
   .appstore-official-badge.small-badge { height: 34px; }
+  #hero-tagteam-card,
+  #hero-sos-card,
+  #hero-marcus-card {
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  #hero-tagteam-card.visible,
+  #hero-sos-card.visible,
+  #hero-marcus-card.visible { opacity: 1; transform: translateY(0); }
+  #hero-sos-card { border-left: 3px solid #D68C7A; }
+  #hero-marcus-card { border-left: 3px solid #93B4D6; }
+
+  .sos-demo {
+    background: var(--surface-2, #F4EFE6); border-radius: 24px; padding: 40px 28px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+  }
+  .sos-btn {
+    width: 96px; height: 96px; border-radius: 50%; background: #D68C7A; color: #fff;
+    border: none; font-family: 'Quicksand'; font-weight: 700; font-size: 1.1rem; letter-spacing: 0.04em;
+    box-shadow: 0 0 0 0 rgba(214,140,122,0.5); cursor: default;
+  }
+  .sos-demo.pulse .sos-btn { animation: sosPulse 1s ease-out 2; }
+  @keyframes sosPulse {
+    0% { box-shadow: 0 0 0 0 rgba(214,140,122,0.55); }
+    100% { box-shadow: 0 0 0 26px rgba(214,140,122,0); }
+  }
+  .sos-arrow { font-size: 1.4rem; color: var(--muted); opacity: 0; transition: opacity 0.4s ease; }
+  .sos-demo.show-arrow .sos-arrow { opacity: 1; }
+  .sos-result {
+    display: flex; align-items: center; gap: 12px; background: var(--surface, #FDFBF7);
+    border: 1px solid var(--border); border-radius: 16px; padding: 14px 18px; width: 100%; max-width: 320px;
+    text-align: left; opacity: 0; transform: translateY(10px); transition: opacity 0.45s ease, transform 0.45s ease;
+  }
+  .sos-result .icon-dot { flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .sos-result .icon-dot svg { width: 18px; height: 18px; }
+  .sos-result .k { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; color: #D68C7A; text-transform: uppercase; margin-bottom: 2px; }
+  .sos-result .v { font-size: 0.92rem; }
+  .sos-demo.show-result .sos-result { opacity: 1; transform: translateY(0); }
+
+  .briefing-card .briefing-top,
+  .briefing-card .briefing-title,
+  .briefing-card .briefing-section {
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.55s ease, transform 0.55s ease;
+  }
+  .briefing-card.in-view .briefing-top { opacity: 1; transform: translateY(0); transition-delay: 0.05s; }
+  .briefing-card.in-view .briefing-title { opacity: 1; transform: translateY(0); transition-delay: 0.15s; }
+  .briefing-card.in-view .briefing-section.step-1 { opacity: 1; transform: translateY(0); transition-delay: 0.3s; }
+  .briefing-card.in-view .briefing-section.step-2 { opacity: 1; transform: translateY(0); transition-delay: 0.45s; }
+  .briefing-card.in-view .briefing-section.step-3 { opacity: 1; transform: translateY(0); transition-delay: 0.6s; }
+
+  .contact-panel {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 28px;
+    padding: 56px 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center;
+    margin: 40px auto; max-width: 980px;
+  }
+  .contact-text .sub { margin-top: 10px; }
+  .contact-form { display: flex; flex-direction: column; gap: 12px; }
+  .contact-form input, .contact-form textarea {
+    width: 100%; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border-strong, var(--border));
+    background: var(--surface); color: var(--on-surface); font-family: 'Quicksand'; font-size: 0.98rem;
+    resize: vertical;
+  }
+  .contact-form input:focus, .contact-form textarea:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+  .contact-form button {
+    background: var(--on-surface); color: var(--surface); border: none; padding: 14px 24px;
+    border-radius: 999px; font-family: 'Quicksand'; font-weight: 700; font-size: 1rem; cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .contact-form button:hover { transform: translateY(-1px); }
+  .contact-form button:disabled { opacity: 0.6; cursor: default; transform: none; }
+  .contact-status { font-size: 0.9rem; font-weight: 600; min-height: 20px; }
+  .contact-status.success { color: #5A7A4E; }
+  .contact-status.error { color: #B85C5C; }
+  @media (max-width: 720px) {
+    .contact-panel { grid-template-columns: 1fr; padding: 36px 24px; }
+  }
 </style>
 </head>
 <body>
@@ -506,9 +585,17 @@
       <div class="app-body">
         <p class="mood-label">TALK TO CUDDLE</p>
         <div class="chat-preview" id="chat-hero" data-chat='[{"who":"mine","text":"I feel like I&#39;m not doing this right"},{"who":"cuddle","text":"You&#39;re doing more right than you know. Want to talk about what&#39;s feeling hard?"}]'></div>
-        <div class="app-card">
+        <div class="app-card" id="hero-tagteam-card">
           <div class="icon-dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
           <div><div class="k">TAG TEAM · 3H 40M ON DUTY</div><div class="v">Good time to tag out. Nudging Marcus now</div></div>
+        </div>
+        <div class="app-card" id="hero-sos-card">
+          <div class="icon-dot" style="background:#F3E4DC;"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke="#D68C7A"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></div>
+          <div><div class="k">SOS · ALWAYS ONE TAP AWAY</div><div class="v">Need backup right now? Skip the wait, notify Marcus immediately.</div></div>
+        </div>
+        <div class="app-card" id="hero-marcus-card">
+          <div class="icon-dot"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+          <div><div class="k">TO MARCUS · JUST NOW</div><div class="v">Mama hasn't slept for hours. Time to take over?</div></div>
         </div>
       </div>
       <div class="tab-bar">
@@ -540,15 +627,15 @@
     <div class="briefing-card">
       <div class="briefing-top"><span>Monday, 8:00am</span><span>Today</span></div>
       <h3 class="briefing-title">Your Morning Briefing</h3>
-      <div class="briefing-section">
+      <div class="briefing-section step-1">
         <div class="briefing-label">TODAY'S APPOINTMENT</div>
         <div class="briefing-row">🩺 Pediatrician follow-up, 10:30am, Sunrise Pediatrics</div>
       </div>
-      <div class="briefing-section">
+      <div class="briefing-section step-2">
         <div class="briefing-label">BABY'S RHYTHM</div>
         <div class="briefing-row">🍼 Next feed likely around 2:15pm, based on today's pattern</div>
       </div>
-      <div class="briefing-section">
+      <div class="briefing-section step-3">
         <div class="briefing-label">TAG TEAM</div>
         <div class="briefing-row">🙌 Marcus is on duty until 6pm</div>
       </div>
@@ -578,6 +665,26 @@
           <div class="privacy-note">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.4 8.4-8 10-4.6-1.6-8-5-8-10V6l8-4z"/></svg>
             <span>An SOS button is always one tap away if you need backup right now, for either of you.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-row reverse" id="sos-feature-row">
+      <div class="feature-text">
+        <div class="icon-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></div>
+        <h3>Some moments can't wait for a routine nudge. That's what SOS is for.</h3>
+        <p>Tag Team handles the everyday handoffs. SOS is separate, and it's for right now: one tap, and whoever's next gets notified immediately, no waiting on hours-on-duty math or the usual schedule.</p>
+      </div>
+      <div class="feature-visual">
+        <div class="sos-demo" id="sos-demo">
+          <div class="sos-btn-wrap">
+            <button class="sos-btn" id="sos-btn-visual" type="button" aria-hidden="true" tabindex="-1">SOS</button>
+          </div>
+          <div class="sos-arrow">↓</div>
+          <div class="sos-result" id="sos-result">
+            <div class="icon-dot" style="background:#F3E4DC;"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke="#D68C7A"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+            <div><div class="k">MARCUS · NOTIFIED IMMEDIATELY</div><div class="v">Mama needs you right now.</div></div>
           </div>
         </div>
       </div>
@@ -669,7 +776,7 @@
     <div class="feature-row">
       <div class="feature-text">
         <div class="icon-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
-        <h3>Baby brain forgets appointments. Cuddle doesn't.</h3>
+        <h3>Mama brain forgets appointments. Cuddle doesn't.</h3>
         <p>Snap a photo of any appointment card or invitation, and Cuddle pulls out the date, time, and location automatically. No typing, no double-checking, no missed pediatrician visit.</p>
       </div>
       <div class="feature-visual">
@@ -868,6 +975,23 @@
   </div>
 </div>
 
+<section class="wrap" id="contact">
+  <div class="contact-panel">
+    <div class="contact-text">
+      <p class="eyebrow">Get in touch</p>
+      <h2>Questions, feedback, or just want to say hi?</h2>
+      <p class="sub">This goes straight to me, not a bot. I read every message.</p>
+    </div>
+    <form class="contact-form" id="contact-form">
+      <input type="text" id="contact-name" placeholder="Your name" required autocomplete="name">
+      <input type="email" id="contact-email" placeholder="Your email" required autocomplete="email">
+      <textarea id="contact-message" placeholder="What's on your mind?" rows="4" required></textarea>
+      <button type="submit" id="contact-submit">Send message</button>
+      <div class="contact-status" id="contact-status"></div>
+    </form>
+  </div>
+</section>
+
 <footer class="wrap">
   <div class="footer-text">
     <span>Cuddle, a postpartum companion</span>
@@ -953,13 +1077,23 @@
     try { messages = JSON.parse(container.getAttribute('data-chat')); } catch (e) { return; }
     if (!messages || !messages.length) return;
 
+    var tagTeamCard = container.id === 'chat-hero' ? document.getElementById('hero-tagteam-card') : null;
+    var sosCard = container.id === 'chat-hero' ? document.getElementById('hero-sos-card') : null;
+    var marcusCard = container.id === 'chat-hero' ? document.getElementById('hero-marcus-card') : null;
+
     if (prefersReducedMotion()) {
       renderStatic(container, messages);
+      if (tagTeamCard) tagTeamCard.classList.add('visible');
+      if (sosCard) sosCard.classList.add('visible');
+      if (marcusCard) marcusCard.classList.add('visible');
       return;
     }
 
     while (true) {
       container.innerHTML = '';
+      if (tagTeamCard) tagTeamCard.classList.remove('visible');
+      if (sosCard) sosCard.classList.remove('visible');
+      if (marcusCard) marcusCard.classList.remove('visible');
       for (var i = 0; i < messages.length; i++) {
         var m = messages[i];
         if (m.who === 'cuddle') {
@@ -981,8 +1115,77 @@
           await sleep(150);
         }
       }
-      await sleep(3400);
+      if (tagTeamCard) {
+        await sleep(300);
+        tagTeamCard.classList.add('visible');
+      }
+      if (sosCard) {
+        await sleep(600);
+        sosCard.classList.add('visible');
+      }
+      if (marcusCard) {
+        await sleep(600);
+        marcusCard.classList.add('visible');
+      }
+      await sleep(3800);
     }
+  }
+
+  function initBriefingReveal() {
+    var card = document.querySelector('.briefing-card');
+    if (!card) return;
+    if (prefersReducedMotion() || !window.IntersectionObserver) {
+      card.classList.add('in-view');
+      return;
+    }
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          card.classList.add('in-view');
+          observer.unobserve(card);
+        }
+      });
+    }, { threshold: 0.35 });
+    observer.observe(card);
+  }
+
+  async function runSosDemo() {
+    var demo = document.getElementById('sos-demo');
+    if (!demo) return;
+    if (prefersReducedMotion()) {
+      demo.classList.add('show-arrow', 'show-result');
+      return;
+    }
+    while (true) {
+      demo.classList.remove('pulse', 'show-arrow', 'show-result');
+      await sleep(900);
+      demo.classList.add('pulse');
+      await sleep(500);
+      demo.classList.add('show-arrow');
+      await sleep(500);
+      demo.classList.add('show-result');
+      await sleep(3600);
+    }
+  }
+
+  function initSosReveal() {
+    var row = document.getElementById('sos-feature-row');
+    if (!row) return;
+    if (!window.IntersectionObserver) {
+      runSosDemo();
+      return;
+    }
+    var started = false;
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting && !started) {
+          started = true;
+          runSosDemo();
+          observer.unobserve(row);
+        }
+      });
+    }, { threshold: 0.4 });
+    observer.observe(row);
   }
 
   function init() {
@@ -990,6 +1193,8 @@
     chats.forEach(function (el, idx) {
       setTimeout(function () { runChat(el); }, idx * 1000);
     });
+    initBriefingReveal();
+    initSosReveal();
   }
 
   if (document.readyState === 'loading') {
@@ -997,6 +1202,50 @@
   } else {
     init();
   }
+})();
+</script>
+
+<script>
+(function () {
+  var CONTACT_API = "https://project-x-production-60b7.up.railway.app/api/contact";
+  var form = document.getElementById("contact-form");
+  if (!form) return;
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var nameEl = document.getElementById("contact-name");
+    var emailEl = document.getElementById("contact-email");
+    var msgEl = document.getElementById("contact-message");
+    var btn = document.getElementById("contact-submit");
+    var status = document.getElementById("contact-status");
+
+    var name = nameEl.value.trim();
+    var email = emailEl.value.trim();
+    var message = msgEl.value.trim();
+    if (!name || !email || !message) return;
+
+    btn.disabled = true;
+    btn.textContent = "Sending...";
+    status.textContent = "";
+    status.className = "contact-status";
+
+    try {
+      var res = await fetch(CONTACT_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name, email: email, message: message, source: "website" }),
+      });
+      if (!res.ok) throw new Error("Request failed: " + res.status);
+      status.textContent = "Message sent — thank you! I'll get back to you soon.";
+      status.classList.add("success");
+      form.reset();
+    } catch (err) {
+      status.textContent = "Something went wrong — mind trying again?";
+      status.classList.add("error");
+    }
+    btn.disabled = false;
+    btn.textContent = "Send message";
+  });
 })();
 </script>
 
