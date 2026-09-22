@@ -73,6 +73,32 @@ async def join_waitlist(body: WaitlistSignup):
     })
     return {"status": "added"}
 
+
+class ContactMessage(BaseModel):
+    name: str
+    email: EmailStr
+    message: str
+    source: str = "website"
+
+
+@api_router.post("/contact")
+async def submit_contact(body: ContactMessage):
+    """Public, unauthenticated contact form submission. No dedup here —
+    unlike the waitlist, the same person may genuinely message twice."""
+    name = body.name.strip()[:200]
+    message = body.message.strip()[:5000]
+    if not name or not message:
+        raise HTTPException(status_code=422, detail="Name and message are required")
+    await db.contact_messages.insert_one({
+        "name": name,
+        "email": body.email,
+        "message": message,
+        "source": body.source,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "read": False,
+    })
+    return {"status": "sent"}
+
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
