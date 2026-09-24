@@ -17,6 +17,8 @@ import { ProfileProvider } from "@/src/lib/profile-context";
 import { LanguageProvider } from "@/src/lib/i18n";
 import { AmbientProvider } from "@/src/lib/ambient-context";
 import { registerSiriIntentHandlers } from "@/src/lib/siri-intents";
+import { registerForPushNotifications } from "@/src/lib/push-notifications";
+import { getDeviceId, api } from "@/src/lib/api";
 import { colors } from "@/src/theme/theme";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { Quicksand_500Medium } from "@expo-google-fonts/quicksand";
@@ -58,6 +60,27 @@ export default function RootLayout() {
         console.log("Siri intent registration failed:", e);
       }
     }
+  }, []);
+
+  useEffect(() => {
+    // A simple heartbeat so the backend knows whether the app has actually
+    // been opened recently, separate from whether anything was logged —
+    // this is what the "haven't seen you in a while" reminder depends on.
+    // Also doubles as a safety net for push permission: this used to only
+    // ever be requested from inside the Tag Team card, so anyone who set
+    // up their profile before that was fixed in onboarding, or who never
+    // adds a household, was never asked at all. requestPermissionsAsync
+    // is safe to call repeatedly — it only shows the real OS prompt once,
+    // and is a no-op after that either way.
+    (async () => {
+      try {
+        const deviceId = await getDeviceId();
+        await api.activityPing(deviceId);
+        registerForPushNotifications(deviceId);
+      } catch (e) {
+        console.log("activity ping failed:", e);
+      }
+    })();
   }, []);
 
   if (!ready) return null;
