@@ -73,6 +73,170 @@ async def join_waitlist(body: WaitlistSignup):
     })
     return {"status": "added"}
 
+
+class ContactMessage(BaseModel):
+    name: str
+    email: EmailStr
+    message: str
+    source: str = "website"
+
+
+@api_router.post("/contact")
+async def submit_contact(body: ContactMessage):
+    """Public, unauthenticated contact form submission. No dedup here —
+    unlike the waitlist, the same person may genuinely message twice."""
+    name = body.name.strip()[:200]
+    message = body.message.strip()[:5000]
+    if not name or not message:
+        raise HTTPException(status_code=422, detail="Name and message are required")
+    await db.contact_messages.insert_one({
+        "name": name,
+        "email": body.email,
+        "message": message,
+        "source": body.source,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "read": False,
+    })
+    return {"status": "sent"}
+
+
+class ChatMoodOptIn(BaseModel):
+    enabled: bool
+
+
+@api_router.patch("/profile/{device_id}/chat-mood-tracking")
+async def set_chat_mood_tracking(device_id: str, body: ChatMoodOptIn):
+    """Explicit opt-in/out for letting Talk to Cuddle conversations also
+    inform her mood trends, separate from her deliberate check-ins. Off by
+    default; this is the only place it can be turned on."""
+    result = await db.profiles.update_one(
+        {"device_id": device_id}, {"$set": {"mood_from_chat_opt_in": body.enabled}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"mood_from_chat_opt_in": body.enabled}
+
+
+async def _infer_mood_from_chat_message(device_id: str, user_message: str):
+    """Runs only when she's explicitly opted in. A small, separate Claude
+    call reads just her latest message and, only if it clearly expresses
+    an emotional state, logs a mood entry tagged source='conversation' —
+    kept distinct from her deliberate check-ins so the heatmap and any
+    doctor export can always show which is which. If the message is
+    neutral logistics ('log a feed', 'what time is it'), nothing is
+    logged — this is deliberately conservative, not a running commentary
+    on every message."""
+    if not anthropic_client:
+        return
+    prompt = (
+        "A new mother sent this message to her postpartum support app's chat: "
+        f'"{user_message}"\n\n'
+        "Does this message clearly express how she is feeling emotionally right now? "
+        "Many messages are just logistics (logging a feed, asking a factual question) and "
+        "express nothing emotional — for those, mood_estimate must be null. "
+        "Respond with ONLY a JSON object, no other text: "
+        '{"mood_estimate": integer 1-5 or null (1=very low, 5=great, null if no clear emotional content), '
+        '"tags": array of up to 3 short lowercase tags from this message only, e.g. ["anxiety","overwhelm"], empty if none}'
+    )
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=150,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = "".join(b.text for b in response.content if b.type == "text").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(raw)
+        mood_estimate = parsed.get("mood_estimate")
+        if mood_estimate is None:
+            return
+        mood_estimate = max(1, min(5, int(mood_estimate)))
+        await db.moods.insert_one({
+            "device_id": device_id,
+            "mood": mood_estimate,
+            "energy": None,
+            "sleep_hours": None,
+            "note": None,
+            "tags": [str(t) for t in (parsed.get("tags") or [])][:3],
+            "source": "conversation",
+            "created_at": now_iso(),
+        })
+    except Exception:
+        logger.exception("chat mood inference failed")
+
+
+@api_router.get("/mood/{device_id}/doctor-report")
+async def mood_doctor_report(device_id: str, days: int = 90):
+    """A doctor-ready view of her own logged data — a day-by-day heatmap
+    plus a short, plain-language pattern summary. This only reflects what
+    she explicitly logged in check-ins; it never infers, diagnoses, or adds
+    anything she didn't report herself."""
+    days = max(7, min(days, 180))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    entries = await db.moods.find(
+        {"device_id": device_id, "created_at": {"$gte": since}}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+
+    by_day: dict = {}
+    tag_counts: dict = {}
+    for e in entries:
+        day = e["created_at"][:10]
+        by_day.setdefault(day, []).append(e)
+        for t in e.get("tags") or []:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+
+    heatmap = []
+    for day, day_entries in sorted(by_day.items()):
+        scores = [d["mood"] for d in day_entries if d.get("mood") is not None]
+        day_tags = sorted({t for d in day_entries for t in (d.get("tags") or [])})
+        heatmap.append({
+            "date": day,
+            "mood": round(sum(scores) / len(scores), 1) if scores else None,
+            "check_ins": len(day_entries),
+            "tags": day_tags,
+        })
+
+    top_tags = sorted(tag_counts.items(), key=lambda kv: kv[1], reverse=True)[:6]
+    checkin_count = sum(1 for e in entries if e.get("source", "checkin") == "checkin")
+    conversation_count = sum(1 for e in entries if e.get("source") == "conversation")
+
+    summary = None
+    if entries and anthropic_client:
+        tag_lines = ", ".join(f"{t} ({c}x)" for t, c in top_tags) if top_tags else "none logged"
+        scores_line = ", ".join(f"{d}:{by_day[d][0]['mood']}" for d in sorted(by_day.keys())[-14:])
+        source_note = (
+            f" Of these, {checkin_count} were deliberate check-ins and {conversation_count} were "
+            "inferred from her Talk to Cuddle conversations (she opted into this)."
+            if conversation_count > 0 else ""
+        )
+        prompt = (
+            f"A new mother has logged {len(entries)} mood check-ins over the last {days} days.{source_note} "
+            f"Her mood scores (1=low, 5=great) for her most recent logged days: {scores_line}. "
+            f"Her most frequently logged concerns/tags: {tag_lines}. "
+            "Write a short (3-4 sentence), plain-language, clinically-neutral summary she could hand "
+            "to her doctor or therapist. Describe the pattern in her own logged data only — do not "
+            "diagnose, do not speculate about causes she hasn't stated, and do not invent anything "
+            "not present in this data. Write it in third person, suitable to print or read aloud in "
+            "an appointment."
+        )
+        try:
+            response = await anthropic_client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            summary = "".join(b.text for b in response.content if b.type == "text").strip()
+        except Exception:
+            logger.exception("doctor report summary generation failed")
+
+    return {
+        "range_days": days,
+        "total_check_ins": len(entries),
+        "checkin_count": checkin_count,
+        "conversation_inferred_count": conversation_count,
+        "heatmap": heatmap,
+        "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
+        "summary": summary,
+    }
+
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -110,6 +274,7 @@ class Profile(BaseModel):
     initial_mood: Optional[int] = None            # 1-5
     concerns: List[str] = []
     postpartum_appt_done: bool = False
+    mood_from_chat_opt_in: bool = False           # explicit opt-in: may Talk to Cuddle conversations also inform mood trends?
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -120,6 +285,7 @@ class MoodEntry(BaseModel):
     sleep_hours: Optional[float] = None
     note: Optional[str] = None
     tags: List[str] = []
+    source: str = "checkin"                        # "checkin" (explicit) or "conversation" (inferred, opt-in only)
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -789,6 +955,20 @@ CHAT_TOOLS = [
         },
     },
     {
+        "name": "log_pump",
+        "description": "Log a pumping session. Use when she tells you how long she pumped on each side, or overall, instead of using the on-screen timer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "left_minutes": {"type": "number", "description": "Minutes pumped on the left side. 0 if she didn't pump that side."},
+                "right_minutes": {"type": "number", "description": "Minutes pumped on the right side. 0 if she didn't pump that side."},
+                "left_ml": {"type": "number", "description": "Ounces/ml produced on the left side, only if she mentioned an amount. Convert oz to ml (1oz \u2248 29.57ml)."},
+                "right_ml": {"type": "number", "description": "Ounces/ml produced on the right side, only if she mentioned an amount."},
+            },
+            "required": ["left_minutes", "right_minutes"],
+        },
+    },
+    {
         "name": "log_diaper",
         "description": "Log a diaper change. Use when she mentions a diaper, pee, poop, wet or dirty diaper.",
         "input_schema": {
@@ -872,6 +1052,26 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
             "at": at, "logged_at": now_iso(),
         })
         return f"Logged: fed {ml}ml."
+
+    if name == "log_pump":
+        left_min = tool_input.get("left_minutes", 0) or 0
+        right_min = tool_input.get("right_minutes", 0) or 0
+        left_ml = tool_input.get("left_ml")
+        right_ml = tool_input.get("right_ml")
+        total_ml = (left_ml or 0) + (right_ml or 0)
+        await db.baby_logs.insert_one({
+            "device_id": device_id, "kind": "pump", "detail": None,
+            "amount_ml": total_ml if (left_ml is not None or right_ml is not None) else None,
+            "diaper_type": None,
+            "duration_minutes": round(left_min + right_min),
+            "left_minutes": left_min, "right_minutes": right_min,
+            "left_ml": left_ml, "right_ml": right_ml,
+            "at": now_iso(), "logged_at": now_iso(),
+        })
+        parts = [f"{left_min} min left", f"{right_min} min right"]
+        if left_ml is not None or right_ml is not None:
+            parts.append(f"({left_ml or 0}ml + {right_ml or 0}ml)")
+        return f"Logged: pumped {', '.join(parts)}."
 
     if name == "log_diaper":
         dtype = tool_input.get("diaper_type", "pee")
@@ -1091,6 +1291,13 @@ async def chat(req: ChatRequest):
         "session_id": req.session_id, "device_id": req.device_id,
         "role": "assistant", "text": reply, "created_at": now_iso(),
     })
+
+    # Fire-and-forget: doesn't delay her reply. Only scheduled at all if
+    # she's explicitly opted in — the check happens here, before the task
+    # is even created, not inside the function.
+    if profile and profile.get("mood_from_chat_opt_in"):
+        asyncio.create_task(_infer_mood_from_chat_message(req.device_id, req.message))
+
     return {"reply": reply}
 
 
@@ -1353,6 +1560,7 @@ class BabyLogCreate(BaseModel):
     amount_ml: Optional[float] = None       # feed quantity, stored canonically in ml
     diaper_type: Optional[str] = None       # pee / poop / both
     duration_minutes: Optional[int] = None  # sleep length, if known
+    side: Optional[str] = None              # "left" / "right" / "both" — breastfeeding only
     at: Optional[str] = None                # backdate a log to when it actually happened
 
 
@@ -1724,12 +1932,30 @@ async def baby_log(b: BabyLogCreate):
         "amount_ml": b.amount_ml,
         "diaper_type": b.diaper_type,
         "duration_minutes": b.duration_minutes,
+        "side": b.side,
         "at": b.at or now_iso(),
         "logged_at": now_iso(),  # when it was actually entered, distinct from when it happened
     }
     await db.baby_logs.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+@api_router.get("/feed/next-side/{device_id}")
+async def feed_next_side(device_id: str):
+    """Which side to start breastfeeding on next, based on the last side
+    actually logged — alternating is the standard guidance, so this just
+    flips whatever she used last. Returns None if there's no recent
+    breastfeeding side data to go on, rather than guessing."""
+    last = await db.baby_logs.find_one(
+        {"device_id": device_id, "kind": "feed", "side": {"$in": ["left", "right"]}},
+        {"_id": 0}, sort=[("at", -1)]
+    )
+    if not last:
+        return {"suggested_side": None, "reason": "no breastfeeding side logged yet"}
+    last_side = last["side"]
+    suggested = "right" if last_side == "left" else "left"
+    return {"suggested_side": suggested, "last_side": last_side, "last_at": last["at"]}
 
 
 async def _start_sleep_session(device_id: str, subject: str) -> dict:
@@ -1779,12 +2005,248 @@ async def _stop_sleep_session(device_id: str, subject: str) -> Optional[dict]:
     return {"duration_minutes": duration_minutes, "started_at": active["started_at"]}
 
 
+class PumpToggle(BaseModel):
+    device_id: str
+    side: str   # "left" or "right"
+
+
+async def _get_or_create_pump_session(device_id: str) -> dict:
+    doc = await db.active_pump_sessions.find_one({"device_id": device_id})
+    if not doc:
+        doc = {
+            "device_id": device_id,
+            "left_started_at": None, "left_accumulated_seconds": 0,
+            "right_started_at": None, "right_accumulated_seconds": 0,
+        }
+        await db.active_pump_sessions.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+def _pump_side_live_seconds(session: dict, side: str) -> int:
+    """Accumulated time for a side, plus whatever's elapsed since it was
+    last started, if it's currently running."""
+    accumulated = session.get(f"{side}_accumulated_seconds", 0)
+    started = session.get(f"{side}_started_at")
+    if started:
+        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(started)).total_seconds()
+        accumulated += elapsed
+    return round(accumulated)
+
+
+@api_router.post("/pump-session/toggle")
+async def pump_session_toggle(body: PumpToggle):
+    """One tap starts that side's timer; tapping again stops it and banks
+    the elapsed time. Left and right are independent — start one, then the
+    other, for a real dual pump, or do them one at a time. Nothing is
+    logged as a real pump entry until /pump-session/finish is called."""
+    if body.side not in ("left", "right"):
+        raise HTTPException(status_code=422, detail="side must be 'left' or 'right'")
+    session = await _get_or_create_pump_session(body.device_id)
+    started_key = f"{body.side}_started_at"
+    accumulated_key = f"{body.side}_accumulated_seconds"
+
+    if session.get(started_key):
+        # currently running -> stop it, bank the elapsed time
+        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(session[started_key])).total_seconds()
+        new_accumulated = session.get(accumulated_key, 0) + elapsed
+        await db.active_pump_sessions.update_one(
+            {"device_id": body.device_id},
+            {"$set": {started_key: None, accumulated_key: new_accumulated}},
+        )
+    else:
+        # not running -> start it
+        await db.active_pump_sessions.update_one(
+            {"device_id": body.device_id},
+            {"$set": {started_key: now_iso()}},
+        )
+
+    session = await _get_or_create_pump_session(body.device_id)
+    return {
+        "left_running": bool(session.get("left_started_at")),
+        "right_running": bool(session.get("right_started_at")),
+        "left_seconds": _pump_side_live_seconds(session, "left"),
+        "right_seconds": _pump_side_live_seconds(session, "right"),
+    }
+
+
+@api_router.get("/pump-session/active/{device_id}")
+async def pump_session_active(device_id: str):
+    """Current live state — both sides' running status and elapsed time so
+    far, for the UI to render two live-ticking timers."""
+    session = await _get_or_create_pump_session(device_id)
+    return {
+        "left_running": bool(session.get("left_started_at")),
+        "right_running": bool(session.get("right_started_at")),
+        "left_seconds": _pump_side_live_seconds(session, "left"),
+        "right_seconds": _pump_side_live_seconds(session, "right"),
+    }
+
+
+async def _finish_pump_session(device_id: str, left_ml: Optional[float] = None, right_ml: Optional[float] = None) -> dict:
+    """Stops whichever side is still running, logs one real pump entry
+    with both sides' totals, and clears the active session. Shared by the
+    REST endpoint and the 'I just pumped X on each side' chat tool, so a
+    typed/spoken log behaves identically to using the on-screen timers.
+    left_ml/right_ml are optional — output volume, when she has it, is
+    what actually powers the side-comparison insight; time alone is kept
+    as a fallback signal for sessions where she didn't measure ounces."""
+    session = await _get_or_create_pump_session(device_id)
+    left_seconds = _pump_side_live_seconds(session, "left")
+    right_seconds = _pump_side_live_seconds(session, "right")
+    await db.active_pump_sessions.delete_one({"device_id": device_id})
+
+    left_minutes = round(left_seconds / 60, 1)
+    right_minutes = round(right_seconds / 60, 1)
+    total_ml = (left_ml or 0) + (right_ml or 0)
+    await db.baby_logs.insert_one({
+        "device_id": device_id, "kind": "pump", "detail": None,
+        "amount_ml": total_ml if (left_ml is not None or right_ml is not None) else None,
+        "diaper_type": None, "duration_minutes": round((left_seconds+right_seconds)/60),
+        "left_minutes": left_minutes, "right_minutes": right_minutes,
+        "left_ml": left_ml, "right_ml": right_ml,
+        "at": now_iso(), "logged_at": now_iso(),
+    })
+    return {"left_minutes": left_minutes, "right_minutes": right_minutes, "left_ml": left_ml, "right_ml": right_ml}
+
+
+@api_router.get("/pump-session/insight/{device_id}")
+async def pump_session_insight(device_id: str, days: int = 14):
+    """Looks at her actual pump history and tells her, honestly, whether
+    one side has been consistently producing less — using real output
+    volume when she's logged it, and falling back to time invested per
+    side only when no volume data exists (a weaker signal, labeled as
+    such). Requires several real sessions before saying anything, so it
+    never guesses from one or two data points."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    logs = await db.baby_logs.find(
+        {"device_id": device_id, "kind": "pump", "at": {"$gte": since}},
+        {"_id": 0}
+    ).to_list(200)
+
+    if len(logs) < 4:
+        return {"has_insight": False, "reason": "not enough sessions logged yet", "session_count": len(logs)}
+
+    ml_sessions = [l for l in logs if l.get("left_ml") is not None or l.get("right_ml") is not None]
+    using_volume = len(ml_sessions) >= 4
+
+    if using_volume:
+        left_vals = [l.get("left_ml") or 0 for l in ml_sessions]
+        right_vals = [l.get("right_ml") or 0 for l in ml_sessions]
+        unit = "ml"
+    else:
+        left_vals = [l.get("left_minutes") or 0 for l in logs]
+        right_vals = [l.get("right_minutes") or 0 for l in logs]
+        unit = "minutes"
+
+    left_avg = sum(left_vals) / len(left_vals)
+    right_avg = sum(right_vals) / len(right_vals)
+
+    if left_avg == 0 and right_avg == 0:
+        return {"has_insight": False, "reason": "no measurable data yet"}
+
+    bigger = max(left_avg, right_avg)
+    smaller = min(left_avg, right_avg)
+    gap_pct = round(((bigger - smaller) / bigger) * 100) if bigger > 0 else 0
+
+    # Only speak up for a real, consistent gap — not day-to-day noise.
+    if gap_pct < 15:
+        return {
+            "has_insight": True, "balanced": True, "using_volume": using_volume, "unit": unit,
+            "left_avg": round(left_avg, 1), "right_avg": round(right_avg, 1),
+            "message": "Your sides have been fairly balanced lately.",
+        }
+
+    lower_side = "left" if left_avg < right_avg else "right"
+    basis = "average output" if using_volume else "average time (no volume logged yet, so this is a rougher signal)"
+    return {
+        "has_insight": True, "balanced": False, "using_volume": using_volume, "unit": unit,
+        "lower_side": lower_side, "gap_percent": gap_pct,
+        "left_avg": round(left_avg, 1), "right_avg": round(right_avg, 1),
+        "message": f"Your {lower_side} side has been producing about {gap_pct}% less than the other, based on {basis} over your last {len(ml_sessions if using_volume else logs)} sessions. Starting on the {lower_side} today, while you have the most energy for it, may help even things out.",
+    }
+
+
+@api_router.get("/pump-session/trend/{device_id}")
+async def pump_session_trend(device_id: str, days: int = 14):
+    """Daily total output over time — the same volume data behind the
+    side-comparison, rolled up per day instead of per side. Useful for two
+    different real situations: noticing supply trending down, or tracking
+    progress building a freezer stash."""
+    days = max(7, min(days, 60))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    logs = await db.baby_logs.find(
+        {"device_id": device_id, "kind": "pump", "at": {"$gte": since}},
+        {"_id": 0}
+    ).sort("at", 1).to_list(500)
+
+    by_day: dict = {}
+    for l in logs:
+        day = l["at"][:10]
+        ml = (l.get("left_ml") or 0) + (l.get("right_ml") or 0)
+        entry = by_day.setdefault(day, {"total_ml": 0, "has_volume": False, "session_count": 0})
+        entry["session_count"] += 1
+        if l.get("left_ml") is not None or l.get("right_ml") is not None:
+            entry["total_ml"] += ml
+            entry["has_volume"] = True
+
+    trend = [
+        {"date": day, "total_ml": round(v["total_ml"], 1) if v["has_volume"] else None, "session_count": v["session_count"]}
+        for day, v in sorted(by_day.items())
+    ]
+    return {"range_days": days, "trend": trend}
+
+
+class PumpSymptomCheck(BaseModel):
+    device_id: str
+    side: str
+    has_symptoms: bool
+    symptoms: List[str] = []   # e.g. ["pain", "redness", "fever", "warm to touch"]
+
+
+@api_router.post("/pump-session/symptom-check")
+async def pump_symptom_check(body: PumpSymptomCheck):
+    """A real safety feature, not just convenience: an ongoing output
+    imbalance between sides is a genuine risk factor for a clogged duct or
+    mastitis. This logs her answer and, if she reports symptoms, returns
+    clear guidance to contact her provider rather than trying to self-
+    diagnose or wait it out."""
+    await db.pump_symptom_checks.insert_one({
+        "device_id": body.device_id, "side": body.side,
+        "has_symptoms": body.has_symptoms, "symptoms": body.symptoms,
+        "created_at": now_iso(),
+    })
+    if not body.has_symptoms:
+        return {"guidance": None}
+    return {
+        "guidance": (
+            "Pain, redness, or fever on one side, especially alongside a drop in output, "
+            "can be early signs of a clogged duct or mastitis. This isn't something to wait out — "
+            "please contact your doctor, midwife, or a lactation consultant today. In the meantime, "
+            "continuing to nurse or pump that side, warm compresses before, and gentle massage while "
+            "feeding can help, but they don't replace getting checked."
+        ),
+        "urgent": "fever" in [s.lower() for s in body.symptoms],
+    }
+
+
+class PumpFinish(BaseModel):
+    left_ml: Optional[float] = None
+    right_ml: Optional[float] = None
+
+
+@api_router.post("/pump-session/finish/{device_id}")
+async def pump_session_finish(device_id: str, body: PumpFinish = PumpFinish()):
+    return await _finish_pump_session(device_id, body.left_ml, body.right_ml)
+
+
 @api_router.post("/sleep-session/start")
 async def sleep_session_start(s: SleepSessionStart):
     """Live start/stop timing, more accurate than guessing a duration after
     the fact. 'self' sessions (a caregiver resting, not the baby) are what
     make this genuinely different from a typical baby-only tracker: the
-    other caregiver in the household can see it happening in real time."""
+    other caregiver in the household can see it happening in real time.
+    """
     return await _start_sleep_session(s.device_id, s.subject)
 
 
@@ -2193,6 +2655,42 @@ class BroadcastAnnouncement(BaseModel):
     admin_key: str
 
 
+@api_router.get("/admin/stats")
+async def admin_stats(admin_key: str):
+    """Real founder-facing numbers pulled directly from the database, not
+    estimated from App Store download counts (which include re-downloads,
+    people who deleted the app, etc). Protected by the same key as the
+    broadcast endpoint — only exists as a Railway environment variable."""
+    if not ADMIN_BROADCAST_KEY or not _secrets.compare_digest(admin_key, ADMIN_BROADCAST_KEY):
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    total_profiles = await db.profiles.count_documents({})
+    new_this_week = await db.profiles.count_documents({"created_at": {"$gte": week_ago}})
+    new_this_month = await db.profiles.count_documents({"created_at": {"$gte": month_ago}})
+
+    active_this_week = await db.app_activity.count_documents({"last_opened_at": {"$gte": week_ago}})
+
+    total_households = await db.households.count_documents({})
+    waitlist_count = await db.waitlist.count_documents({})
+    contact_messages = await db.contact_messages.count_documents({})
+    push_enabled = await db.push_tokens.count_documents({})
+
+    return {
+        "total_profiles": total_profiles,
+        "new_this_week": new_this_week,
+        "new_this_month": new_this_month,
+        "active_this_week": active_this_week,
+        "total_households": total_households,
+        "push_notifications_enabled": push_enabled,
+        "waitlist_signups": waitlist_count,
+        "contact_messages": contact_messages,
+        "generated_at": now_iso(),
+    }
+
+
 @api_router.post("/admin/broadcast-announcement")
 async def broadcast_announcement(a: BroadcastAnnouncement):
     """Sends a push to every registered device — for real app-wide news
@@ -2257,7 +2755,7 @@ async def cron_tick(x_cron_secret: str = Header(None)):
     if not CRON_SECRET or not _secrets.compare_digest(x_cron_secret or "", CRON_SECRET):
         raise HTTPException(status_code=403, detail="Invalid cron secret")
 
-    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "errors": 0}
+    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "inactivity": 0, "errors": 0}
 
     # Tag Team fatigue nudges only apply to households with a second member
     # to actually notify.
@@ -2284,6 +2782,7 @@ async def cron_tick(x_cron_secret: str = Header(None)):
             ("wellbeing", wellbeing_self_check),
             ("events", check_event_reminders),
             ("proactive", proactive_ai_checkin),
+            ("inactivity", inactivity_reminder),
         ]
         for key, fn in checks:
             try:
@@ -3957,6 +4456,55 @@ async def wellbeing_self_check(device_id: str):
 
 # ----- Predictive nudge: turns the feed prediction into an actual heads-up
 # push instead of something she only sees if she happens to open Track. -----
+class ActivityPing(BaseModel):
+    device_id: str
+
+
+@api_router.post("/activity/ping")
+async def activity_ping(body: ActivityPing):
+    """Called once when the app opens, so Cuddle actually knows whether
+    she's been using it, separate from whether she's logged anything.
+    This is the one thing inactivity_reminder below depends on."""
+    await db.app_activity.update_one(
+        {"device_id": body.device_id},
+        {"$set": {"device_id": body.device_id, "last_opened_at": now_iso()}},
+        upsert=True,
+    )
+    return {"status": "ok"}
+
+
+async def inactivity_reminder(device_id: str) -> dict:
+    """A plain 'we miss you' nudge if she simply hasn't opened the app in
+    a while — not tied to any concerning pattern, just gentle continuity.
+    Separate from proactive_ai_checkin, which only fires on real signals;
+    this one only cares whether the app itself has gone quiet."""
+    activity = await db.app_activity.find_one({"device_id": device_id}, {"_id": 0})
+    if not activity or not activity.get("last_opened_at"):
+        return {"nudged": False, "reason": "no activity record yet"}
+
+    days_since = _hours_between(activity["last_opened_at"], now_iso()) / 24
+    if days_since < 4:
+        return {"nudged": False, "reason": "recently active"}
+
+    tracker = await db.inactivity_nudge_tracker.find_one({"device_id": device_id})
+    if tracker:
+        last_nudged_days_ago = _hours_between(tracker["last_nudged_at"], now_iso()) / 24
+        if last_nudged_days_ago < 6:
+            return {"nudged": False, "reason": "already nudged recently"}
+
+    await send_push(
+        device_id,
+        "Cuddle",
+        "It's been a little while — no pressure, just here whenever you need me.",
+    )
+    await db.inactivity_nudge_tracker.update_one(
+        {"device_id": device_id},
+        {"$set": {"device_id": device_id, "last_nudged_at": now_iso()}},
+        upsert=True,
+    )
+    return {"nudged": True, "days_since_open": round(days_since, 1)}
+
+
 async def proactive_ai_checkin(device_id: str) -> dict:
     """The 'reach out first' half of the AI companion, instead of only ever
     responding when she happens to open Talk to Cuddle herself. Looks at
