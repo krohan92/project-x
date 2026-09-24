@@ -91,6 +91,8 @@ export default function Track() {
   // Inline logging panel state
   const [activeKind, setActiveKind] = useState<string | null>(null);
   const [feedMl, setFeedMl] = useState(90);
+  const [feedSide, setFeedSide] = useState<"left" | "right" | "both" | null>(null);
+  const [suggestedSide, setSuggestedSide] = useState<string | null>(null);
   const [diaperType, setDiaperType] = useState<"pee" | "poop" | "both">("pee");
   const [sleepMins, setSleepMins] = useState(45);
   const [whenMinsAgo, setWhenMinsAgo] = useState(0);
@@ -190,7 +192,11 @@ export default function Track() {
     setUseExactTime(false);
     setPickedTime(new Date());
     setCustomOz("");
+    setFeedSide(null);
     setActiveKind(activeKind === kind ? null : kind);
+    if (kind === "feed" && activeKind !== "feed" && deviceId) {
+      api.feedNextSide(deviceId).then((r) => setSuggestedSide(r.suggested_side)).catch(() => {});
+    }
   };
 
   const confirmLog = async () => {
@@ -203,7 +209,7 @@ export default function Track() {
     const at = isoMinutesAgo(effectiveMinsAgo);
     try {
       if (activeKind === "feed") {
-        await api.babyLog({ device_id: deviceId, kind: "feed", amount_ml: feedMl, at });
+        await api.babyLog({ device_id: deviceId, kind: "feed", amount_ml: feedMl, side: feedSide, at });
       } else if (activeKind === "diaper") {
         await api.babyLog({ device_id: deviceId, kind: "diaper", diaper_type: diaperType, at });
       } else if (activeKind === "sleep") {
@@ -497,6 +503,25 @@ export default function Track() {
                       <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>= {feedMl}ml</Txt>
                     )}
                   </View>
+
+                  <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: spacing.md, marginBottom: spacing.xs }}>
+                    Breastfeeding side (optional)
+                  </Txt>
+                  <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                    {(["left", "right", "both"] as const).map((side) => (
+                      <Pressable
+                        testID={`feed-side-${side}`}
+                        key={side}
+                        onPress={() => { Haptics.selectionAsync(); setFeedSide(feedSide === side ? null : side); }}
+                        style={[styles.chip, feedSide === side && styles.chipActive]}
+                      >
+                        <Txt style={{ color: feedSide === side ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                          {side === "both" ? "Both" : side.charAt(0).toUpperCase() + side.slice(1)}
+                          {suggestedSide === side ? " (suggested)" : ""}
+                        </Txt>
+                      </Pressable>
+                    ))}
+                  </View>
                 </>
               )}
 
@@ -616,6 +641,22 @@ export default function Track() {
             })}
           </Card>
         )}
+
+        {/* Pump timer */}
+        <Pressable testID="track-pump-timer" onPress={() => router.push("/pump-timer")}>
+          <Card style={styles.linkCard}>
+            <View style={[styles.linkIcon, { backgroundColor: "#E8A9BC" + "60" }]}>
+              <Feather name="clock" size={20} color="#B5627E" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Txt weight="500">Pump timer</Txt>
+              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm }}>
+                Time left and right independently
+              </Txt>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.muted} />
+          </Card>
+        </Pressable>
 
         {/* Newborn basics */}
         <Txt display style={styles.section}>Newborn basics</Txt>
