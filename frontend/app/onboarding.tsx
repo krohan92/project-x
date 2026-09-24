@@ -21,6 +21,7 @@ import { useRouter } from "expo-router";
 import { Txt, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
+import { registerForPushNotifications } from "@/src/lib/push-notifications";
 import { useProfile } from "@/src/lib/profile-context";
 
 const BG =
@@ -149,6 +150,12 @@ export default function Onboarding() {
       if (mood != null) {
         await api.addMood({ device_id: deviceId, mood, note: "First check-in" });
       }
+      // Ask for notification permission right here, regardless of whether
+      // she sets up Tag Team — this used to only fire for households with
+      // a partner added, which meant solo users were never asked at all
+      // and silently never received any push (proactive check-ins,
+      // reminders, anything) for the entire life of the app.
+      registerForPushNotifications(deviceId);
       await refresh();
       router.replace("/(tabs)");
     } catch (e: any) {
