@@ -56,6 +56,7 @@ export type Profile = {
   initial_mood?: number | null;
   concerns: string[];
   postpartum_appt_done?: boolean;
+  mood_from_chat_opt_in?: boolean;
   created_at?: string;
   // Set via /nearby/settings — optional, opt-in nearby/cultural-matching fields
   email?: string | null;
@@ -89,6 +90,11 @@ export const api = {
   submitEpds: (body: any) =>
     req(`/epds`, { method: "POST", body: JSON.stringify(body) }),
   epdsHistory: (deviceId: string) => req(`/epds/${deviceId}`),
+  doctorReport: (deviceId: string, days = 90) => req(`/mood/${deviceId}/doctor-report?days=${days}`),
+  activityPing: (deviceId: string) =>
+    req(`/activity/ping`, { method: "POST", body: JSON.stringify({ device_id: deviceId }) }),
+  setChatMoodTracking: (deviceId: string, enabled: boolean) =>
+    req(`/profile/${deviceId}/chat-mood-tracking`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
 
   chatHistory: (sessionId: string) => req(`/chat/${sessionId}`),
   sendChat: (body: any) =>
@@ -125,6 +131,22 @@ export const api = {
   sleepSessionStop: (deviceId: string, subject: "baby" | "self") =>
     req(`/sleep-session/stop`, { method: "POST", body: JSON.stringify({ device_id: deviceId, subject }) }),
   sleepSessionActive: (deviceId: string) => req(`/sleep-session/active/${deviceId}`),
+  pumpSessionToggle: (deviceId: string, side: "left" | "right") =>
+    req(`/pump-session/toggle`, { method: "POST", body: JSON.stringify({ device_id: deviceId, side }) }),
+  pumpSessionActive: (deviceId: string) => req(`/pump-session/active/${deviceId}`),
+  pumpSessionFinish: (deviceId: string, leftMl?: number, rightMl?: number) =>
+    req(`/pump-session/finish/${deviceId}`, {
+      method: "POST",
+      body: JSON.stringify({ left_ml: leftMl ?? null, right_ml: rightMl ?? null }),
+    }),
+  pumpSessionInsight: (deviceId: string) => req(`/pump-session/insight/${deviceId}`),
+  pumpSessionTrend: (deviceId: string, days = 14) => req(`/pump-session/trend/${deviceId}?days=${days}`),
+  pumpSymptomCheck: (deviceId: string, side: string, hasSymptoms: boolean, symptoms: string[] = []) =>
+    req(`/pump-session/symptom-check`, {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceId, side, has_symptoms: hasSymptoms, symptoms }),
+    }),
+  feedNextSide: (deviceId: string) => req(`/feed/next-side/${deviceId}`),
   babyLogPredictions: (deviceId: string) => req(`/baby-log/${deviceId}/predictions`),
   handoffBalance: (householdCode: string) => req(`/handoff/balance/${householdCode}`),
 
