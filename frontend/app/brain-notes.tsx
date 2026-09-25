@@ -48,10 +48,11 @@ export default function BrainNotes() {
   };
 
   const complete = async (id: string) => {
+    if (!deviceId) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setNotes((n) => n.filter((x) => x.id !== id)); // optimistic
     try {
-      await api.completeBrainNote(id);
+      await api.completeBrainNote(id, deviceId);
     } catch {
       load();
     }
