@@ -19,6 +19,8 @@ import { useAmbient } from "@/src/lib/ambient-context";
 import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { isNightTime } from "@/src/lib/night";
+import { WhatsNewModal } from "@/src/components/WhatsNewModal";
+import { NotificationPermissionBanner } from "@/src/components/NotificationPermissionBanner";
 
 // A small set of original warm gradients — rotates together with the quote
 // so the whole card feels genuinely different each time, not just the text.
@@ -153,6 +155,7 @@ export default function Home() {
 
   return (
     <View style={{ flex: 1, backgroundColor: ambientTint }}>
+      <WhatsNewModal />
       {/* Sticky header */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View>
@@ -178,6 +181,8 @@ export default function Home() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
         }
       >
+        <NotificationPermissionBanner />
+
         {/* Hero quote — or, late at night, a quieter invitation instead */}
         {isNightTime() ? (
           <Animated.View entering={FadeInDown.duration(500)}>

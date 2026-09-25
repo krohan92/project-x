@@ -432,6 +432,84 @@ TIPS = [
     {"title": "Name the feeling", "category": "Mind", "body": "Saying 'I feel overwhelmed' out loud reduces its intensity. Your feelings are valid and they will pass.", "icon": "message-circle"},
 ]
 
+# Sourced from ACOG's postpartum/assisted-vaginal-delivery patient FAQs, NHS
+# recovery guidance, and Cleveland Clinic/Mayo-affiliated recovery timelines
+# (see the individual notes below). Deliberately population-level ("many
+# people... ") never diagnostic, and every stage pairs what's normal with
+# a real red-flag list — this is informational content, not a substitute
+# for her actual provider, and is presented that way in the UI every time.
+RECOVERY_TIMELINE = {
+    "vaginal": [
+        {
+            "weeks": [0, 2],
+            "normal": "Bleeding (lochia) starts bright red and heavy, like a heavy period, often with small clots — this is expected. Perineal soreness, swelling, and stitches (if you tore or had an episiotomy) are common. Many people also notice afterpains (cramping) as the uterus contracts back down, especially while breastfeeding.",
+            "red_flags": ["Soaking one pad an hour for 2+ hours", "Passing a clot larger than a golf ball", "Fever", "Foul-smelling discharge", "Severe or worsening pain"],
+        },
+        {
+            "weeks": [2, 6],
+            "normal": "Bleeding typically lightens and shifts from red toward pink, then brown. Stitches continue dissolving and the area may feel itchy — often a sign of healing, not a problem. Energy is still commonly low; the baby blues (weepiness, feeling on edge) are common in these weeks and usually ease on their own.",
+            "red_flags": ["Bleeding gets heavier instead of lighter", "Pain that's getting worse, not better", "Signs of infection at any stitches (increasing redness, warmth, pus)", "Persistent sadness or hopelessness that doesn't lift"],
+        },
+        {
+            "weeks": [6, 12],
+            "normal": "ACOG frames this as the tail end of the 'fourth trimester,' not a finish line. Many people feel noticeably better by now, though core strength, pelvic floor healing, and energy commonly continue improving for months. This is typically when a provider evaluates whether you're cleared for exercise — a physiotherapist can check for diastasis recti before higher-impact movement.",
+            "red_flags": ["New or ongoing incontinence", "Pelvic pain or a feeling of heaviness/bulging", "Mood symptoms that are affecting daily life or bonding with baby"],
+        },
+    ],
+    "vacuum-assisted": [
+        {
+            "weeks": [0, 2],
+            "normal": "Recovery generally follows the same pattern as an unassisted vaginal birth, but perineal tears are somewhat more common with vacuum-assisted delivery, so soreness in that area may be more pronounced. Bleeding starts heavy and red, similar to any vaginal delivery.",
+            "red_flags": ["Soaking one pad an hour for 2+ hours", "Passing a clot larger than a golf ball", "Fever", "Increasing pain, swelling, or discharge at any tear site"],
+        },
+        {
+            "weeks": [2, 6],
+            "normal": "Similar timeline to an unassisted vaginal birth. If you had a tear, healing continues through this window; itching at the site is often a healing sign. Some people report a small increased chance of urinary symptoms after an assisted delivery — usually temporary.",
+            "red_flags": ["New or worsening urinary leakage", "Pain that's getting worse, not better", "Signs of infection at any tear site"],
+        },
+        {
+            "weeks": [6, 12],
+            "normal": "Most people are recovering comparably to any vaginal birth by now. If pelvic floor symptoms (leakage, heaviness) are still present, it's worth raising specifically at your check-in — pelvic floor physical therapy is a real, common, effective option.",
+            "red_flags": ["Ongoing incontinence", "Pelvic pain or a feeling of heaviness/bulging"],
+        },
+    ],
+    "forceps-assisted": [
+        {
+            "weeks": [0, 2],
+            "normal": "Forceps delivery has a somewhat higher chance of perineal or vaginal tearing than an unassisted birth, so soreness and swelling in that area can be more noticeable, and pain relief needs may be a bit higher. Otherwise, early bleeding and recovery follow the same pattern as any vaginal birth.",
+            "red_flags": ["Soaking one pad an hour for 2+ hours", "Passing a clot larger than a golf ball", "Fever", "Increasing pain, swelling, redness, or discharge at any tear site", "New difficulty controlling gas or stool"],
+        },
+        {
+            "weeks": [2, 6],
+            "normal": "Tear healing continues through this window. Because forceps carries a somewhat higher chance of a deeper tear, follow-up on healing progress at this stage matters — don't hesitate to go in sooner than a scheduled visit if something feels off.",
+            "red_flags": ["New or worsening urinary or bowel leakage", "Pain that's getting worse, not better", "Signs of infection at the tear site"],
+        },
+        {
+            "weeks": [6, 12],
+            "normal": "Many people are recovering well by now, but because forceps carries a real, higher-than-average chance of pelvic floor impact, it's worth specifically asking about pelvic floor strength at your check-in, even if nothing feels obviously wrong.",
+            "red_flags": ["Ongoing incontinence", "Pelvic pain, a feeling of heaviness/bulging, or pain with intimacy"],
+        },
+    ],
+    "c-section": [
+        {
+            "weeks": [0, 2],
+            "normal": "This is major abdominal surgery — expect real soreness at the incision, especially moving, coughing, or holding baby. Some vaginal bleeding is still normal too (typically lighter than after a vaginal birth), and gas pain or constipation is common. Short walks are encouraged and help lower blood clot risk; avoid lifting anything heavier than your baby.",
+            "red_flags": ["Soaking one pad an hour for 2+ hours", "Passing a clot larger than a golf ball", "Fever", "Incision redness, warmth, swelling, or pus", "Incision opening up", "Severe or worsening abdominal pain"],
+        },
+        {
+            "weeks": [2, 6],
+            "normal": "Energy and mobility typically increase gradually. Incision discomfort usually decreases and internal dissolvable stitches continue breaking down (commonly 6-8 weeks). Many providers clear light exercise and driving around the 6-week check-in, not before.",
+            "red_flags": ["Incision that's more painful, not less, over time", "Any sign of incision infection", "Fever", "Chest pain or shortness of breath"],
+        },
+        {
+            "weeks": [6, 12],
+            "normal": "ACOG generally recommends waiting at least 12 weeks before intense exercise after a C-section specifically — this is longer than after a vaginal birth because it's real surgical recovery. Many people feel significantly better by 6 weeks, but full recovery, including scar sensitivity and core strength, can take up to 3 months.",
+            "red_flags": ["Numbness or pain at the incision that's worsening, not fading", "New pelvic or abdominal pain", "Mood symptoms affecting daily life"],
+        },
+    ],
+}
+
+
 HELPLINES = [
     {"name": "Postpartum Support International", "detail": "Call or text 1-800-944-4773", "type": "support", "note": "Free, confidential support for maternal mental health."},
     {"name": "988 Suicide & Crisis Lifeline", "detail": "Call or text 988", "type": "crisis", "note": "24/7 free crisis support if you feel unsafe."},
@@ -795,6 +873,65 @@ async def get_tips():
 @api_router.get("/helplines")
 async def get_helplines():
     return HELPLINES
+
+
+def _normalize_delivery_type(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    r = raw.lower()
+    if "vacuum" in r:
+        return "vacuum-assisted"
+    if "forceps" in r:
+        return "forceps-assisted"
+    if "c-section" in r or "cesarean" in r or "csection" in r:
+        return "c-section"
+    if "vaginal" in r:
+        return "vaginal"
+    return None
+
+
+@api_router.get("/recovery/timeline/{device_id}")
+async def recovery_timeline(device_id: str):
+    """A real, sourced recovery timeline (ACOG/NHS/Cleveland Clinic-derived,
+    see RECOVERY_TIMELINE's own citation note) tailored to her actual
+    delivery type and how many weeks out she is. Deliberately general and
+    never diagnostic — every stage pairs what's normal with real red flags,
+    and the response always says plainly that this doesn't replace her own
+    provider. Returns has_data: False rather than guessing if she hasn't
+    shared a delivery type or date."""
+    profile = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    delivery_type = _normalize_delivery_type(profile.get("delivery_type"))
+    delivery_date = profile.get("delivery_date")
+    if not delivery_type or delivery_type not in RECOVERY_TIMELINE or not delivery_date:
+        return {"has_data": False, "reason": "delivery type or date not shared yet"}
+
+    try:
+        delivered = datetime.fromisoformat(delivery_date.replace("Z", "+00:00"))
+    except ValueError:
+        return {"has_data": False, "reason": "invalid delivery date"}
+
+    weeks_out = max(0, (datetime.now(timezone.utc) - delivered).days // 7)
+    stages = RECOVERY_TIMELINE[delivery_type]
+    current = next((s for s in stages if s["weeks"][0] <= weeks_out < s["weeks"][1]), stages[-1])
+
+    return {
+        "has_data": True,
+        "delivery_type": delivery_type,
+        "weeks_postpartum": weeks_out,
+        "current_stage": {
+            "week_range": current["weeks"],
+            "whats_normal": current["normal"],
+            "red_flags": current["red_flags"],
+        },
+        "all_stages": [
+            {"week_range": s["weeks"], "whats_normal": s["normal"], "red_flags": s["red_flags"]}
+            for s in stages
+        ],
+        "disclaimer": "This is general information based on typical recovery patterns, not a diagnosis or a substitute for your own provider. Every recovery is different — when in doubt, reach out to your doctor or midwife.",
+    }
 
 
 @api_router.get("/pump-providers")
@@ -3622,6 +3759,8 @@ class MeetupCreate(BaseModel):
     description: Optional[str] = None
     cultural_tag: Optional[str] = None   # optional link to a CULTURAL_SPACES key
     is_recurring: bool = False           # marks it as an ongoing weekly group, not a one-off
+    lat: Optional[float] = None          # real coordinates — what actually makes "near me" work anywhere
+    lng: Optional[float] = None
 
 
 class MeetupRSVP(BaseModel):
@@ -3857,6 +3996,84 @@ async def meetup_venues(neighborhood: str):
     return MEETUP_VENUES.get(neighborhood, [])
 
 
+_OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+
+
+def _overpass_grid_key(lat: float, lng: float) -> str:
+    # Rounds to roughly a 1km grid cell so nearby requests within the same
+    # area share one cached result, instead of every slightly-different
+    # GPS reading triggering its own fresh Overpass query.
+    return f"{round(lat, 2)}:{round(lng, 2)}"
+
+
+async def _query_overpass_nearby(lat: float, lng: float, radius_m: int = 2000) -> list:
+    """Real, free, universal venue discovery — genuinely works in any
+    country, unlike the hand-curated list above, since OpenStreetMap's
+    data isn't limited to specific pre-written areas. Coverage density
+    still varies by how well-mapped a given area happens to be; this
+    returns whatever real data exists there, nothing invented if it's
+    sparse. Tries a second public mirror if the primary is slow/down,
+    since this is shared community infrastructure, not a paid SLA."""
+    query = f"""
+    [out:json][timeout:10];
+    (
+      node["leisure"="park"](around:{radius_m},{lat},{lng});
+      node["amenity"="cafe"](around:{radius_m},{lat},{lng});
+      node["amenity"="community_centre"](around:{radius_m},{lat},{lng});
+      node["leisure"="playground"](around:{radius_m},{lat},{lng});
+    );
+    out body 12;
+    """
+    for endpoint in _OVERPASS_ENDPOINTS:
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                resp = await client.post(endpoint, data={"data": query})
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                venues = []
+                type_map = {"park": "park", "cafe": "cafe", "community_centre": "clubhouse", "playground": "park"}
+                for el in data.get("elements", []):
+                    tags = el.get("tags", {})
+                    name = tags.get("name")
+                    if not name:
+                        continue
+                    kind = tags.get("leisure") or tags.get("amenity")
+                    venues.append({
+                        "name": name,
+                        "type": type_map.get(kind, "other"),
+                        "note": "Nearby on OpenStreetMap",
+                    })
+                return venues
+        except Exception:
+            logger.exception("Overpass query failed for endpoint %s", endpoint)
+            continue
+    return []
+
+
+@api_router.get("/meetups/venues-near")
+async def meetup_venues_near(lat: float, lng: float):
+    """The real 'anywhere in the world' venue suggestion — checks our own
+    cache first (real caching discipline, not hitting Overpass on every
+    request), falls back to a live OpenStreetMap query only on a cache
+    miss, then caches that result for next time. Zero Google involved."""
+    grid_key = _overpass_grid_key(lat, lng)
+    cached = await db.venue_cache.find_one({"grid_key": grid_key}, {"_id": 0})
+    if cached:
+        return {"venues": cached["venues"], "source": "cache", "cached_at": cached["cached_at"]}
+
+    venues = await _query_overpass_nearby(lat, lng)
+    await db.venue_cache.update_one(
+        {"grid_key": grid_key},
+        {"$set": {"grid_key": grid_key, "venues": venues, "cached_at": now_iso()}},
+        upsert=True,
+    )
+    return {"venues": venues, "source": "live", "cached_at": now_iso()}
+
+
 @api_router.get("/meetups/venues/{neighborhood}/recommended")
 async def recommended_venues(neighborhood: str):
     """Ranks venues by how highly moms rated their mood after past meetups
@@ -3884,13 +4101,22 @@ async def create_meetup(m: MeetupCreate):
     doc["meetup_id"] = meetup_id
     doc["created_at"] = now_iso()
     doc["attendees"] = [{"device_id": m.device_id, "name": "Host"}]
+    # GeoJSON point, only when real coordinates were actually given — this
+    # is what lets $near queries work below. [lng, lat] order is GeoJSON's
+    # own convention, not a typo.
+    if m.lat is not None and m.lng is not None:
+        doc["location"] = {"type": "Point", "coordinates": [m.lng, m.lat]}
     await db.meetups.insert_one(dict(doc))
     doc.pop("_id", None)
     return doc
 
 
 @api_router.get("/meetups")
-async def list_meetups(neighborhood: Optional[str] = None, category: Optional[str] = None, cultural_tag: Optional[str] = None):
+async def list_meetups(
+    neighborhood: Optional[str] = None, category: Optional[str] = None,
+    cultural_tag: Optional[str] = None, lat: Optional[float] = None,
+    lng: Optional[float] = None, radius_km: float = 50,
+):
     today = datetime.now(timezone.utc).date().isoformat()
     query: dict = {"date": {"$gte": today}}
     if neighborhood and neighborhood != "all":
@@ -3899,6 +4125,25 @@ async def list_meetups(neighborhood: Optional[str] = None, category: Optional[st
         query["category"] = category
     if cultural_tag:
         query["cultural_tag"] = cultural_tag
+
+    if lat is not None and lng is not None:
+        # Real distance filtering/sorting, done by MongoDB itself — this
+        # is what makes "meetups near me" actually work in any country,
+        # not just the 2 hand-seeded neighborhoods. Only matches meetups
+        # that have real coordinates; text-only "custom" neighborhoods
+        # from before this fix won't appear in a near-me search, only in
+        # the neighborhood dropdown list.
+        query["location"] = {
+            "$near": {
+                "$geometry": {"type": "Point", "coordinates": [lng, lat]},
+                "$maxDistance": radius_km * 1000,
+            }
+        }
+        # $near already returns nearest-first, so an extra sort would
+        # undo that ordering — skip the date sort in this branch.
+        docs = await db.meetups.find(query, {"_id": 0}).to_list(200)
+        return docs
+
     docs = await db.meetups.find(query, {"_id": 0}).sort("date", 1).to_list(200)
     return docs
 
@@ -4834,7 +5079,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
-    pass  # community starts genuinely empty — no seeded/fake posts
+    # 2dsphere lets MongoDB itself do real distance filtering/sorting for
+    # "meetups near me" — no Google Maps involved, this is 100% our own
+    # users' submitted coordinates. Safe to call on every startup; MongoDB
+    # no-ops if the index already exists.
+    try:
+        await db.meetups.create_index([("location", "2dsphere")])
+    except Exception:
+        logger.exception("failed to ensure meetups geospatial index")
 
 
 @app.on_event("shutdown")

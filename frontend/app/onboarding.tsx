@@ -371,7 +371,7 @@ export default function Onboarding() {
               <>
                 <Txt display style={styles.stepTitle}>How did your baby arrive?</Txt>
                 <Txt style={styles.stepSub}>There is no wrong answer here.</Txt>
-                {["Vaginal birth", "C-section", "Assisted (forceps/vacuum)", "Prefer not to say"].map((o) => (
+                {["Vaginal birth", "C-section", "Vacuum-assisted", "Forceps-assisted", "Prefer not to say"].map((o) => (
                   <OptionCard
                     key={o}
                     testID={`delivery-${o}`}

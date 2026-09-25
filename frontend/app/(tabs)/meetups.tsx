@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   StyleSheet,
@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { Txt, Card, Button } from "@/src/components/ui";
@@ -111,12 +112,15 @@ export default function Meetups() {
   const [neighborhoods, setNeighborhoods] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [neighborhood, setNeighborhood] = useState("all");
-  const [composeNeighborhood, setComposeNeighborhood] = useState("riverstone");
+  const [composeNeighborhood, setComposeNeighborhood] = useState("");
   const [customAreaText, setCustomAreaText] = useState("");
   const [pickingCustomArea, setPickingCustomArea] = useState(false);
   const [category, setCategory] = useState("all");
   const [meetups, setMeetups] = useState<any[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [myLat, setMyLat] = useState<number | null>(null);
+  const [myLng, setMyLng] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<"near_me" | "browse">("near_me");
 
   // compose form
   const [title, setTitle] = useState("");
@@ -133,8 +137,16 @@ export default function Meetups() {
 
   const load = useCallback(async (n: string, c: string) => {
     try {
-      const [ms, ns, cs] = await Promise.all([
-        api.listMeetups({ neighborhood: n === "all" ? undefined : n, category: c === "all" ? undefined : c }),
+      let ms: any[];
+      if (viewMode === "near_me" && myLat != null && myLng != null) {
+        // Real GPS-based search — this is the actual fix for "everywhere,"
+        // not the old hand-picked neighborhood list, which only ever made
+        // sense for people literally in the Fresno area.
+        ms = await api.listMeetups({ lat: myLat, lng: myLng, radius_km: 50, category: c === "all" ? undefined : c });
+      } else {
+        ms = await api.listMeetups({ neighborhood: n === "all" ? undefined : n, category: c === "all" ? undefined : c });
+      }
+      const [ns, cs] = await Promise.all([
         neighborhoods.length ? Promise.resolve(neighborhoods) : api.meetupNeighborhoods(),
         categories.length ? Promise.resolve(categories) : api.meetupCategories(),
       ]);
@@ -143,6 +155,29 @@ export default function Meetups() {
       if (!categories.length) setCategories(cs);
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, myLat, myLng]);
+
+  // Try for real location once, on mount — if she declines or it's
+  // unavailable, viewMode quietly falls back to neighborhood browsing
+  // instead of forcing a broken "near me" view.
+  useEffect(() => {
+    (async () => {
+      try {
+        let perm = await Location.getForegroundPermissionsAsync();
+        if (perm.status !== "granted") {
+          perm = await Location.requestForegroundPermissionsAsync();
+        }
+        if (perm.status === "granted") {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+          setMyLat(pos.coords.latitude);
+          setMyLng(pos.coords.longitude);
+        } else {
+          setViewMode("browse");
+        }
+      } catch {
+        setViewMode("browse");
+      }
+    })();
   }, []);
 
   useFocusEffect(useCallback(() => { load(neighborhood, category); }, [neighborhood, category, load]));
@@ -153,8 +188,11 @@ export default function Meetups() {
     setPickingCustomArea(false);
     setCustomAreaText("");
     // A meetup has to belong to one real place — "All areas" is only a
-    // browsing filter, never a valid target for creating one.
-    const resolved = neighborhood !== "all" ? neighborhood : (neighborhoods[0]?.key || "riverstone");
+    // browsing filter, never a valid target for creating one. If she's
+    // not filtering by a known area, leave this blank rather than
+    // silently defaulting to a Fresno-area neighborhood that may have
+    // nothing to do with where she actually is.
+    const resolved = neighborhood !== "all" ? neighborhood : "";
     setComposeNeighborhood(resolved);
     try {
       const v = await api.meetupVenues(resolved);
@@ -169,12 +207,20 @@ export default function Meetups() {
     setPickingCustomArea(false);
     setComposeNeighborhood(key);
     try {
-      const v = await api.meetupVenues(key);
+      let v = await api.meetupVenues(key);
+      // No hand-curated venues for this area — try a real, live,
+      // universal lookup (OpenStreetMap, via our own cached endpoint)
+      // before giving up to a blank custom-entry field. This is what
+      // makes venue suggestions work anywhere, not just the handful of
+      // areas someone wrote in ahead of time.
+      if (v.length === 0 && myLat != null && myLng != null) {
+        try {
+          const near = await api.meetupVenuesNear(myLat, myLng);
+          v = near.venues || [];
+        } catch {}
+      }
       const sorted = sortVenuesForCategory(v, cat);
       setVenues(sorted);
-      // No curated venues for this area (either custom, or genuinely
-      // empty) — skip straight to typing a spot rather than showing a
-      // blank list.
       setVenueName(sorted[0]?.name || "__custom__");
     } catch {
       setVenues([]);
@@ -198,9 +244,29 @@ export default function Meetups() {
   };
 
   const submit = async () => {
-    if (!deviceId || !title.trim() || !dateIso) return;
+    if (!deviceId || !title.trim() || !dateIso || !composeNeighborhood.trim()) return;
     setPosting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // Real coordinates, captured once at creation — this is what makes
+    // "meetups near me" actually work anywhere, not just the couple of
+    // hand-seeded areas. Best-effort: a meetup still gets created even if
+    // she declines location or it's unavailable, just without geo-search
+    // support until someone edits it in with real coordinates later.
+    let lat: number | undefined;
+    let lng: number | undefined;
+    try {
+      let perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== "granted") {
+        perm = await Location.requestForegroundPermissionsAsync();
+      }
+      if (perm.status === "granted") {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      }
+    } catch {}
+
     try {
       const created = await api.createMeetup({
         device_id: deviceId,
@@ -211,6 +277,8 @@ export default function Meetups() {
         date: dateIso,
         time_label: timeLabel,
         description: description.trim() || undefined,
+        lat,
+        lng,
       });
       setTitle(""); setDescription(""); setCustomVenue("");
       setComposeOpen(false);
@@ -476,7 +544,7 @@ export default function Meetups() {
                 label="Plan it"
                 onPress={submit}
                 loading={posting}
-                disabled={!title.trim() || (!venueName || (venueName === "__custom__" && !customVenue.trim()))}
+                disabled={!title.trim() || !composeNeighborhood.trim() || (!venueName || (venueName === "__custom__" && !customVenue.trim()))}
               />
             </ScrollView>
           </View>

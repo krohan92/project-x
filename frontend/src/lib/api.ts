@@ -254,13 +254,17 @@ export const api = {
   meetupNeighborhoods: () => req(`/meetups/neighborhoods`),
   meetupCategories: () => req(`/meetups/categories`),
   meetupVenues: (neighborhood: string) => req(`/meetups/venues/${neighborhood}`),
+  meetupVenuesNear: (lat: number, lng: number) => req(`/meetups/venues-near?lat=${lat}&lng=${lng}`),
   recommendedVenues: (neighborhood: string) => req(`/meetups/venues/${neighborhood}/recommended`),
   createMeetup: (body: any) => req(`/meetups`, { method: "POST", body: JSON.stringify(body) }),
-  listMeetups: (params?: { neighborhood?: string; category?: string; cultural_tag?: string }) => {
+  listMeetups: (params?: { neighborhood?: string; category?: string; cultural_tag?: string; lat?: number; lng?: number; radius_km?: number }) => {
     const qs = new URLSearchParams();
     if (params?.neighborhood) qs.set("neighborhood", params.neighborhood);
     if (params?.category) qs.set("category", params.category);
     if (params?.cultural_tag) qs.set("cultural_tag", params.cultural_tag);
+    if (params?.lat != null) qs.set("lat", String(params.lat));
+    if (params?.lng != null) qs.set("lng", String(params.lng));
+    if (params?.radius_km != null) qs.set("radius_km", String(params.radius_km));
     const q = qs.toString();
     return req(`/meetups${q ? `?${q}` : ""}`);
   },
