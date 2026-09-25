@@ -21,6 +21,7 @@ import { useRouter } from "expo-router";
 import { Txt, Button } from "@/src/components/ui";
 import { colors, spacing, radius, fontSize, fonts } from "@/src/theme/theme";
 import { api } from "@/src/lib/api";
+import * as Localization from "expo-localization";
 import { registerForPushNotifications } from "@/src/lib/push-notifications";
 import { useProfile } from "@/src/lib/profile-context";
 
@@ -66,6 +67,19 @@ function OptionCard({
   );
 }
 
+// Ounces are genuinely a US-specific convention for baby feeding amounts —
+// virtually everywhere else (UK, India, everywhere) uses ml day to day.
+// This is a real, defensible default, not a guess dressed up as one; she
+// can still override it later if this ever gets a settings toggle.
+function detectUnitSystem(): "oz" | "ml" {
+  try {
+    const regionCode = Localization.getLocales()?.[0]?.regionCode;
+    return regionCode === "US" ? "oz" : "ml";
+  } catch {
+    return "oz";
+  }
+}
+
 export default function Onboarding() {
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
@@ -88,8 +102,9 @@ export default function Onboarding() {
   const [weeksPostpartum, setWeeksPostpartum] = useState<number | null>(null);
   const [mood, setMood] = useState<number | null>(null);
   const [concerns, setConcerns] = useState<string[]>([]);
+  const [unitSystem, setUnitSystem] = useState<"oz" | "ml">(detectUnitSystem());
 
-  const TOTAL = 8;
+  const TOTAL = 9;
 
   const toggleConcern = (c: string) => {
     Haptics.selectionAsync();
@@ -146,6 +161,7 @@ export default function Onboarding() {
         support_level: support,
         initial_mood: mood,
         concerns,
+        unit_system: unitSystem,
       });
       if (mood != null) {
         await api.addMood({ device_id: deviceId, mood, note: "First check-in" });
@@ -469,6 +485,35 @@ export default function Onboarding() {
                       </Txt>
                     </Pressable>
                   ))}
+                </View>
+              </>
+            )}
+
+            {step === 8 && (
+              <>
+                <Txt display style={styles.stepTitle}>Quick check — where are you?</Txt>
+                <Txt style={styles.stepSub}>
+                  We guessed based on your device. This just decides whether amounts show in oz or ml — change it if it's wrong.
+                </Txt>
+                <View style={styles.wrapRow}>
+                  <Pressable
+                    testID="unit-system-oz"
+                    onPress={() => { Haptics.selectionAsync(); setUnitSystem("oz"); }}
+                    style={[styles.chip, unitSystem === "oz" && styles.chipSelected]}
+                  >
+                    <Txt style={{ color: unitSystem === "oz" ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                      United States (oz)
+                    </Txt>
+                  </Pressable>
+                  <Pressable
+                    testID="unit-system-ml"
+                    onPress={() => { Haptics.selectionAsync(); setUnitSystem("ml"); }}
+                    style={[styles.chip, unitSystem === "ml" && styles.chipSelected]}
+                  >
+                    <Txt style={{ color: unitSystem === "ml" ? colors.onBrandPrimary : colors.onSurfaceSecondary }}>
+                      Outside the US (ml)
+                    </Txt>
+                  </Pressable>
                 </View>
               </>
             )}

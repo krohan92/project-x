@@ -57,6 +57,7 @@ export type Profile = {
   concerns: string[];
   postpartum_appt_done?: boolean;
   mood_from_chat_opt_in?: boolean;
+  unit_system?: "oz" | "ml";
   created_at?: string;
   // Set via /nearby/settings — optional, opt-in nearby/cultural-matching fields
   email?: string | null;
@@ -91,10 +92,13 @@ export const api = {
     req(`/epds`, { method: "POST", body: JSON.stringify(body) }),
   epdsHistory: (deviceId: string) => req(`/epds/${deviceId}`),
   doctorReport: (deviceId: string, days = 90) => req(`/mood/${deviceId}/doctor-report?days=${days}`),
+  exportFullReport: (deviceId: string, days = 30) => req(`/export/full-report/${deviceId}?days=${days}`),
   activityPing: (deviceId: string) =>
     req(`/activity/ping`, { method: "POST", body: JSON.stringify({ device_id: deviceId }) }),
   setChatMoodTracking: (deviceId: string, enabled: boolean) =>
     req(`/profile/${deviceId}/chat-mood-tracking`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  setUnitSystem: (deviceId: string, unitSystem: "oz" | "ml") =>
+    req(`/profile/${deviceId}/unit-system`, { method: "PATCH", body: JSON.stringify({ unit_system: unitSystem }) }),
 
   chatHistory: (sessionId: string) => req(`/chat/${sessionId}`),
   sendChat: (body: any) =>

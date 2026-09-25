@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import json
 import asyncio
+import statistics
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, BeforeValidator, EmailStr
@@ -117,6 +118,25 @@ async def set_chat_mood_tracking(device_id: str, body: ChatMoodOptIn):
     return {"mood_from_chat_opt_in": body.enabled}
 
 
+class UnitSystemUpdate(BaseModel):
+    unit_system: str   # "oz" or "ml"
+
+
+@api_router.patch("/profile/{device_id}/unit-system")
+async def set_unit_system(device_id: str, body: UnitSystemUpdate):
+    """Changes how amounts DISPLAY (feeds, pumping) — oz is common in the
+    US, ml almost everywhere else. Storage is always ml regardless; this
+    only affects what she sees and what export reports say."""
+    if body.unit_system not in ("oz", "ml"):
+        raise HTTPException(status_code=422, detail="unit_system must be 'oz' or 'ml'")
+    result = await db.profiles.update_one(
+        {"device_id": device_id}, {"$set": {"unit_system": body.unit_system}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"unit_system": body.unit_system}
+
+
 async def _infer_mood_from_chat_message(device_id: str, user_message: str):
     """Runs only when she's explicitly opted in. A small, separate Claude
     call reads just her latest message and, only if it clearly expresses
@@ -162,6 +182,121 @@ async def _infer_mood_from_chat_message(device_id: str, user_message: str):
         })
     except Exception:
         logger.exception("chat mood inference failed")
+
+
+@api_router.get("/export/full-report/{device_id}")
+async def export_full_report(device_id: str, days: int = 90):
+    """The comprehensive 'share everything with your doctor' export —
+    feeds, pumping, diapers, baby's sleep, mom's own rest, and meetup
+    attendance (a real proxy for social connection, which matters
+    clinically in postpartum care). Includes real standard deviation
+    across individual entries, not just daily totals, since consistency
+    (or the lack of it) is often more clinically useful than an average
+    alone. Same discipline throughout: only what was actually logged,
+    day-by-day and week-by-week, never inferred or diagnostic."""
+    days = max(7, min(days, 180))
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    since = since_dt.isoformat()
+
+    logs = await db.baby_logs.find(
+        {"device_id": device_id, "at": {"$gte": since}}, {"_id": 0}
+    ).sort("at", 1).to_list(5000)
+    mom_rest_logs = await db.caregiver_rest_logs.find(
+        {"device_id": device_id, "at": {"$gte": since}}, {"_id": 0}
+    ).sort("at", 1).to_list(1000)
+    attended_meetups = await db.meetups.find(
+        {"attendees.device_id": device_id, "date": {"$gte": since_dt.date().isoformat()}},
+        {"_id": 0, "title": 1, "date": 1, "category": 1},
+    ).sort("date", 1).to_list(200)
+
+    def stdev(values: list) -> Optional[float]:
+        vals = [v for v in values if v is not None]
+        if len(vals) < 2:
+            return None
+        return round(statistics.stdev(vals), 1)
+
+    # ---- per-day aggregation (for daily table + weekly rollups) ----
+    by_day: dict = {}
+    feed_amounts, pump_amounts, baby_sleep_durations = [], [], []
+
+    for l in logs:
+        day = l["at"][:10]
+        entry = by_day.setdefault(day, {
+            "feed_ml": 0, "feed_count": 0, "pump_ml": 0, "pump_count": 0,
+            "pee_count": 0, "poop_count": 0, "sleep_minutes": 0,
+        })
+        kind = l.get("kind")
+        if kind == "feed":
+            ml = l.get("amount_ml") or 0
+            entry["feed_ml"] += ml; entry["feed_count"] += 1
+            feed_amounts.append(ml)
+        elif kind == "pump":
+            ml = (l.get("left_ml") or 0) + (l.get("right_ml") or 0)
+            entry["pump_ml"] += ml; entry["pump_count"] += 1
+            pump_amounts.append(ml)
+        elif kind == "diaper":
+            dtype = l.get("diaper_type")
+            if dtype in ("pee", "both"): entry["pee_count"] += 1
+            if dtype in ("poop", "both"): entry["poop_count"] += 1
+        elif kind == "sleep":
+            mins = l.get("duration_minutes") or 0
+            entry["sleep_minutes"] += mins
+            baby_sleep_durations.append(mins)
+
+    daily = [{"date": d, **vals} for d, vals in sorted(by_day.items())]
+    days_with_data = max(1, len(by_day))
+
+    # ---- weekly rollups, so a 90-day export shows real trend, not just one lump total ----
+    weekly: dict = {}
+    for d in daily:
+        week_start = (datetime.fromisoformat(d["date"]) - timedelta(days=datetime.fromisoformat(d["date"]).weekday())).date().isoformat()
+        w = weekly.setdefault(week_start, {
+            "feed_ml": 0, "feed_count": 0, "pump_ml": 0, "pump_count": 0,
+            "pee_count": 0, "poop_count": 0, "sleep_minutes": 0,
+        })
+        for k in w:
+            w[k] += d[k]
+    weekly_list = [{"week_of": w, **vals} for w, vals in sorted(weekly.items())]
+
+    # ---- mom's own rest ----
+    mom_rest_minutes = [l.get("duration_minutes") or 0 for l in mom_rest_logs]
+    mom_rest_total = sum(mom_rest_minutes)
+
+    totals = {
+        "feed_ml": sum(feed_amounts), "feed_count": len(feed_amounts),
+        "pump_ml": sum(pump_amounts), "pump_count": len(pump_amounts),
+        "pee_count": sum(d["pee_count"] for d in daily),
+        "poop_count": sum(d["poop_count"] for d in daily),
+        "sleep_minutes": sum(baby_sleep_durations), "sleep_count": len(baby_sleep_durations),
+        "mom_rest_minutes": mom_rest_total, "mom_rest_count": len(mom_rest_logs),
+        "meetups_attended": len(attended_meetups),
+    }
+
+    return {
+        "range_days": days,
+        "days_with_data": len(by_day),
+        "daily": daily,
+        "weekly": weekly_list,
+        "totals": totals,
+        "daily_averages": {
+            "feed_ml_per_day": round(totals["feed_ml"] / days_with_data, 1),
+            "feed_count_per_day": round(totals["feed_count"] / days_with_data, 1),
+            "pump_ml_per_day": round(totals["pump_ml"] / days_with_data, 1),
+            "pee_per_day": round(totals["pee_count"] / days_with_data, 1),
+            "poop_per_day": round(totals["poop_count"] / days_with_data, 1),
+            "sleep_hours_per_day": round(totals["sleep_minutes"] / 60 / days_with_data, 1),
+            "mom_rest_hours_per_day": round(mom_rest_total / 60 / days_with_data, 1),
+        },
+        "standard_deviation": {
+            "feed_ml": stdev(feed_amounts),
+            "pump_ml": stdev(pump_amounts),
+            "baby_sleep_minutes": stdev(baby_sleep_durations),
+            "mom_rest_minutes": stdev(mom_rest_minutes),
+            "note": "How much individual entries vary from the average — a small number means fairly consistent, a large one means it swings a lot day to day. Null if there wasn't enough data yet to calculate.",
+        },
+        "meetups_attended": [{"title": m["title"], "date": m["date"], "category": m.get("category")} for m in attended_meetups],
+        "disclaimer": "This reflects only what was logged in the app — gaps in logging are not gaps in care. Bring this alongside, not instead of, your own observations.",
+    }
 
 
 @api_router.get("/mood/{device_id}/doctor-report")
@@ -275,6 +410,7 @@ class Profile(BaseModel):
     concerns: List[str] = []
     postpartum_appt_done: bool = False
     mood_from_chat_opt_in: bool = False           # explicit opt-in: may Talk to Cuddle conversations also inform mood trends?
+    unit_system: str = "oz"                        # "oz" or "ml" — display only, everything is still stored canonically in ml
     created_at: str = Field(default_factory=now_iso)
 
 
