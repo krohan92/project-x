@@ -176,10 +176,15 @@ export default function Onboarding() {
       router.replace("/(tabs)");
     } catch (e: any) {
       setSaving(false);
-      const msg = "Couldn't save just now. Check your connection and try again.";
+      // Temporarily surfaces the real underlying error (network vs auth
+      // vs a specific save that failed) instead of one generic message —
+      // this is what actually lets us tell what's wrong next time,
+      // rather than guessing blind from a screenshot again.
+      const realError = e?.message || String(e);
+      const msg = `Couldn't save just now. (${realError})`;
       setErrorMsg(msg);
       Alert.alert("Something went wrong", msg);
-      console.log("onboarding save failed:", e?.message || e);
+      console.log("onboarding save failed:", realError);
     }
   };
 
