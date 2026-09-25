@@ -1358,6 +1358,18 @@ CHAT_TOOLS = [
         },
     },
     {
+        "name": "remind_self",
+        "description": "Schedules a push notification back to HER, later — for a self-reminder like 'remind me in 2 minutes, I have a meeting at 10:45' or 'remind me in an hour to call the pediatrician'. This is the tool for anything where SHE is the one who should get the notification, not schedule_nudge (which is for messaging someone else in her household).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delay_minutes": {"type": "number", "description": "How many minutes from now to send the reminder. Convert hours to minutes."},
+                "message": {"type": "string", "description": "What to remind her of, written naturally, e.g. 'Your meeting is starting now' or 'Time to call the pediatrician'."},
+            },
+            "required": ["delay_minutes", "message"],
+        },
+    },
+    {
         "name": "create_event",
         "description": "Creates a real calendar reminder when she mentions something with an actual date/time she needs to remember — an appointment, a class, a delivery, anything time-specific. Use today's date (given in your instructions) to resolve relative terms like 'tomorrow' into a real date. Do not use this for vague to-dos with no specific time — that's a Mama Brain Capture note instead, a separate feature you don't have a tool for; just acknowledge those warmly in conversation.",
         "input_schema": {
@@ -1369,6 +1381,18 @@ CHAT_TOOLS = [
                 "reminder_hours_before": {"type": "number", "description": "How many hours before the event to remind her. Default to 2 if she didn't specify; use 24 for something she'd want a day's notice for."},
             },
             "required": ["title", "date"],
+        },
+    },
+    {
+        "name": "remind_me",
+        "description": "A simple, near-term reminder for HERSELF — 'remind me in 2 minutes', 'remind me in an hour to call the pharmacy'. Different from create_event (which is for real calendar dates/appointments) and schedule_nudge (which messages someone ELSE in her household, never her). Use this specifically for short, relative-delay self-reminders with no real calendar date attached.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "delay_minutes": {"type": "number", "description": "Minutes from now. Convert hours to minutes (e.g. 'in an hour' = 60, 'in 2 minutes' = 2)."},
+                "message": {"type": "string", "description": "What to remind her about, written warmly and briefly."},
+            },
+            "required": ["delay_minutes", "message"],
         },
     },
     {
@@ -1581,6 +1605,22 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
         )
         return f"Done — I'll nudge {target.get('name') or target.get('role')} {when}."
 
+    if name == "remind_self":
+        delay_minutes = max(1, min(int(tool_input.get("delay_minutes", 0)), 60 * 24 * 7))
+        send_at = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        await db.scheduled_nudges.insert_one({
+            "target_device_id": device_id,  # herself, not a household match
+            "requested_by_device_id": device_id,
+            "message": tool_input.get("message", "").strip() or "Cuddle here — your reminder is up.",
+            "send_at": send_at,
+            "sent": False,
+            "created_at": now_iso(),
+        })
+        when = "in a moment" if delay_minutes < 2 else (
+            f"in {delay_minutes} minutes" if delay_minutes < 60 else f"in about {round(delay_minutes/60, 1)} hours"
+        )
+        return f"Done — I'll remind you {when}."
+
     if name == "create_event":
         try:
             event_date = tool_input.get("date")
@@ -1602,6 +1642,22 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
         await db.personal_events.insert_one(dict(doc))
         when = doc["date"] + (f" at {doc['time_label']}" if doc["time_label"] else "")
         return f"Added to her calendar: {doc['title']} on {when}. She'll get a reminder {doc['reminder_hours_before']} hours before."
+
+    if name == "remind_me":
+        delay_minutes = max(1, min(int(tool_input.get("delay_minutes", 0)), 60 * 24 * 7))  # 1 min to 7 days
+        send_at = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        await db.scheduled_nudges.insert_one({
+            "target_device_id": device_id,  # herself — this is the real difference from schedule_nudge
+            "requested_by_device_id": device_id,
+            "message": tool_input.get("message", "").strip() or "Cuddle here, just the reminder you asked for.",
+            "send_at": send_at,
+            "sent": False,
+            "created_at": now_iso(),
+        })
+        when = "in a moment" if delay_minutes < 2 else (
+            f"in {delay_minutes} minutes" if delay_minutes < 60 else f"in about {round(delay_minutes/60, 1)} hours"
+        )
+        return f"Got it — I'll remind her {when}."
 
     if name == "tag_team_switch":
         h = await db.households.find_one({"members.device_id": device_id})
@@ -1973,6 +2029,73 @@ HOMELY_RECIPES = [
             "Brown the ground beef with diced onion and garlic, drain excess fat.",
             "Add to a slow cooker with beans, tomatoes, chili powder, and cumin.",
             "Cook on low 6-8 hours, or high 3-4 hours. Real hands-off time for a busy day.",
+        ],
+    },
+    {
+        "id": "moong_dal_khichdi",
+        "title": "Moong Dal Khichdi",
+        "servings": 2,
+        "cooking_time": 25,
+        "ingredients": [
+            {"name": "split yellow moong dal", "quantity": 0.5, "unit": "CUP"},
+            {"name": "basmati rice", "quantity": 0.5, "unit": "CUP"},
+            {"name": "ghee", "quantity": 1, "unit": "TABLESPOON"},
+            {"name": "cumin seeds", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "turmeric", "quantity": 0.5, "unit": "TEASPOON"},
+            {"name": "ginger", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "salt", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "water", "quantity": 4, "unit": "CUP"},
+        ],
+        "instructions": [
+            "Rinse the dal and rice together until the water runs clear.",
+            "Heat ghee in a pot, add cumin seeds and grated ginger, let them sizzle a few seconds.",
+            "Add the rinsed dal and rice, turmeric, and salt, stir to coat.",
+            "Add water, bring to a boil, then simmer uncovered 18-20 minutes, stirring occasionally, until soft and porridge-like.",
+        ],
+    },
+    {
+        "id": "vegetable_poha",
+        "title": "Vegetable Poha",
+        "servings": 2,
+        "cooking_time": 15,
+        "ingredients": [
+            {"name": "flattened rice (poha)", "quantity": 1.5, "unit": "CUP"},
+            {"name": "peas", "quantity": 0.5, "unit": "CUP"},
+            {"name": "yellow onion", "quantity": 1, "unit": "EACH"},
+            {"name": "mustard seeds", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "turmeric", "quantity": 0.5, "unit": "TEASPOON"},
+            {"name": "peanuts", "quantity": 0.25, "unit": "CUP"},
+            {"name": "lemon", "quantity": 1, "unit": "EACH"},
+            {"name": "oil", "quantity": 2, "unit": "TABLESPOON"},
+        ],
+        "instructions": [
+            "Rinse the poha in a colander under water for a few seconds until softened, then set aside to drain.",
+            "Heat oil, add mustard seeds until they pop, then add diced onion and peanuts, cook until onion softens.",
+            "Add peas and turmeric, cook 2-3 minutes.",
+            "Add the drained poha, stir gently to combine, cook 3-4 minutes until heated through.",
+            "Finish with a squeeze of lemon juice.",
+        ],
+    },
+    {
+        "id": "masala_chana",
+        "title": "Masala Chana (Spiced Chickpeas)",
+        "servings": 2,
+        "cooking_time": 20,
+        "ingredients": [
+            {"name": "canned chickpeas", "quantity": 1, "unit": "CAN"},
+            {"name": "yellow onion", "quantity": 1, "unit": "EACH"},
+            {"name": "tomato", "quantity": 1, "unit": "EACH"},
+            {"name": "ginger garlic paste", "quantity": 1, "unit": "TABLESPOON"},
+            {"name": "cumin", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "garam masala", "quantity": 1, "unit": "TEASPOON"},
+            {"name": "turmeric", "quantity": 0.5, "unit": "TEASPOON"},
+            {"name": "oil", "quantity": 2, "unit": "TABLESPOON"},
+        ],
+        "instructions": [
+            "Heat oil, add cumin seeds, then diced onion — cook until golden.",
+            "Add ginger garlic paste, cook 1 minute, then diced tomato, turmeric, and garam masala.",
+            "Cook until the tomato breaks down into a thick sauce, about 5 minutes.",
+            "Add the drained chickpeas (with a splash of their liquid), simmer 8-10 minutes.",
         ],
     },
 ]

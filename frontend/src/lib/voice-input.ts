@@ -21,9 +21,23 @@ export function useVoiceInput(onResult: (text: string) => void) {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
+  // Accumulates across pauses in continuous mode — without this, switching
+  // continuous on would send each natural pause as its own separate
+  // message instead of waiting for the whole thought.
+  const accumulatedRef = useRef("");
 
-  useSpeechRecognitionEvent("start", () => setListening(true));
-  useSpeechRecognitionEvent("end", () => setListening(false));
+  useSpeechRecognitionEvent("start", () => {
+    accumulatedRef.current = "";
+    setListening(true);
+  });
+  useSpeechRecognitionEvent("end", () => {
+    setListening(false);
+    const finalText = accumulatedRef.current.trim();
+    accumulatedRef.current = "";
+    if (finalText) {
+      onResultRef.current(finalText);
+    }
+  });
   useSpeechRecognitionEvent("error", (event: any) => {
     console.log("voice input error:", event?.error, event?.message);
     setListening(false);
@@ -31,7 +45,11 @@ export function useVoiceInput(onResult: (text: string) => void) {
   useSpeechRecognitionEvent("result", (event: any) => {
     const text = event?.results?.[0]?.transcript;
     if (text && event?.isFinal) {
-      onResultRef.current(text);
+      // Continuous mode can emit several final segments as she pauses
+      // between thoughts — append instead of overwriting, and don't
+      // fire onResult until listening actually ends (see "end" above),
+      // so a full multi-sentence message goes through as one message.
+      accumulatedRef.current = accumulatedRef.current ? `${accumulatedRef.current} ${text}` : text;
     }
   });
 
@@ -47,7 +65,12 @@ export function useVoiceInput(onResult: (text: string) => void) {
         lang: "en-US",
         interimResults: false,
         maxAlternatives: 1,
-        continuous: false,
+        // Was false — on iOS that means the recognizer gives up after
+        // just 3 seconds of silence, which cuts off completely normal
+        // speech any time she pauses mid-thought (exactly what was
+        // reported). true lets her speak in full, natural sentences with
+        // real pauses, and keeps listening until she actually stops it.
+        continuous: true,
       });
     } catch (e) {
       console.log("voice input failed to start:", e);
