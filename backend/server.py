@@ -53,6 +53,71 @@ INSTACART_BASE_URL = os.environ.get('INSTACART_BASE_URL', 'https://connect.dev.i
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+# ----- Device auth — moved here deliberately, right after api_router is
+# defined, because Python evaluates a "= Depends(_verify_device)" default
+# argument at FUNCTION DEFINITION time, not at call time. When this block
+# lived further down the file, every endpoint above it that referenced
+# Depends(_verify_device) crashed the entire server on startup with
+# NameError the moment Railway tried to import the module — not a slow
+# response, a hard crash, every single time. This is that fix.
+def _create_device_token(device_id: str) -> str:
+    """Binds a signed token to a device_id — the actual fix for the audit's
+    top finding. Nothing here is a real account: no password, no separate
+    identity, the anonymous-device model stays exactly as lightweight as
+    it's always been. What changes is that from this point on, a request
+    claiming to be a given device_id has to actually hold a token the
+    server itself signed for that device, not just type the string in."""
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    payload = {
+        "device_id": device_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+class DeviceTokenRequest(BaseModel):
+    device_id: str
+
+
+@api_router.post("/auth/device-token")
+async def issue_device_token(body: DeviceTokenRequest):
+    """First call for a given device_id mints its token — same trust
+    level as every existing device_id-based endpoint has always had at
+    that single moment (the server has no way to know who's genuinely
+    behind a brand-new device_id, and neither does any app that works
+    this way). What matters is every call AFTER this one: without this
+    exact signed token, nothing can act as that device_id anymore, which
+    is what closes the real gap — someone simply typing in another
+    person's device_id string no longer gets them anywhere."""
+    token = _create_device_token(body.device_id)
+    return {"token": token, "device_id": body.device_id}
+
+
+async def _verify_device(authorization: str = Header(None)) -> str:
+    """The real enforcement dependency — returns the verified device_id
+    from a valid signed token, or rejects the request outright. Endpoints
+    using this stop trusting a client-supplied device_id parameter and
+    use this return value instead."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing device token")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    try:
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Device session expired")
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid device token")
+    device_id = payload.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=401, detail="Malformed device token")
+    return device_id
+
+
+
 
 class WaitlistSignup(BaseModel):
     email: EmailStr
@@ -806,63 +871,6 @@ def _create_jwt(user_id: str, device_id: str) -> str:
         "iat": datetime.now(timezone.utc),
     }
     return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-def _create_device_token(device_id: str) -> str:
-    """Binds a signed token to a device_id — the actual fix for the audit's
-    top finding. Nothing here is a real account: no password, no separate
-    identity, the anonymous-device model stays exactly as lightweight as
-    it's always been. What changes is that from this point on, a request
-    claiming to be a given device_id has to actually hold a token the
-    server itself signed for that device, not just type the string in."""
-    if not JWT_SECRET:
-        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
-    payload = {
-        "device_id": device_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS),
-        "iat": datetime.now(timezone.utc),
-    }
-    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-class DeviceTokenRequest(BaseModel):
-    device_id: str
-
-
-@api_router.post("/auth/device-token")
-async def issue_device_token(body: DeviceTokenRequest):
-    """First call for a given device_id mints its token — same trust
-    level as every existing device_id-based endpoint has always had at
-    that single moment (the server has no way to know who's genuinely
-    behind a brand-new device_id, and neither does any app that works
-    this way). What matters is every call AFTER this one: without this
-    exact signed token, nothing can act as that device_id anymore, which
-    is what closes the real gap — someone simply typing in another
-    person's device_id string no longer gets them anywhere."""
-    token = _create_device_token(body.device_id)
-    return {"token": token, "device_id": body.device_id}
-
-
-async def _verify_device(authorization: str = Header(None)) -> str:
-    """The real enforcement dependency — returns the verified device_id
-    from a valid signed token, or rejects the request outright. Endpoints
-    using this stop trusting a client-supplied device_id parameter and
-    use this return value instead."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing device token")
-    token = authorization.removeprefix("Bearer ").strip()
-    if not JWT_SECRET:
-        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
-    try:
-        payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except pyjwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Device session expired")
-    except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid device token")
-    device_id = payload.get("device_id")
-    if not device_id:
-        raise HTTPException(status_code=401, detail="Malformed device token")
-    return device_id
 
 
 async def _current_user(authorization: str = Header(None)) -> dict:
