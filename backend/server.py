@@ -765,10 +765,13 @@ def build_system_prompt(profile: Optional[dict], pattern_summary: str = "") -> s
             "quietly inform a grounded, specific suggestion rather than a generic one — but always in your "
             "own words, warmly, as a friend who's been paying attention, not as a system reciting her data."
         )
+    today_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
     return (
         "You are Cuddle, a warm, deeply empathetic companion for mothers in the postpartum period. "
         "You are NOT a doctor and you never diagnose, prescribe, or give clinical medical instructions. "
         "You are a supportive, non-judgmental listener — like a wise, gentle friend who has been through it. "
+        f"Today's date is {today_str} — use this to correctly resolve relative dates she mentions "
+        "(\"tomorrow\", \"next Tuesday\", \"in two hours\") into real dates/times when logging or creating anything. "
         f"{ctx}{pattern_ctx}\n\n"
         "IMPORTANT — how to use the context above: those are background facts for you to be aware of, "
         "not a checklist or an opening topic. Never lead with them, and never ask about them out of the "
@@ -1342,6 +1345,33 @@ CHAT_TOOLS = [
         },
     },
     {
+        "name": "schedule_nudge",
+        "description": "Schedule a push notification to a specific Tag Team household member for later. Use when she asks Cuddle to remind/nudge someone else (e.g. 'ask Raj to check on me in 2 hours', 'nudge dad in an hour'). Never use this to message herself — that's a reminder, not a nudge to someone else.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_name": {"type": "string", "description": "Who to nudge — a name, role (e.g. 'dad', 'partner', 'nani'), or custom role as she said it. Matched against her real household members."},
+                "delay_minutes": {"type": "number", "description": "How many minutes from now to send it. Convert hours to minutes (e.g. '2 hours' = 120)."},
+                "message": {"type": "string", "description": "The actual nudge text to send, written warmly in Cuddle's voice, based on what she asked for."},
+            },
+            "required": ["target_name", "delay_minutes", "message"],
+        },
+    },
+    {
+        "name": "create_event",
+        "description": "Creates a real calendar reminder when she mentions something with an actual date/time she needs to remember — an appointment, a class, a delivery, anything time-specific. Use today's date (given in your instructions) to resolve relative terms like 'tomorrow' into a real date. Do not use this for vague to-dos with no specific time — that's a Mama Brain Capture note instead, a separate feature you don't have a tool for; just acknowledge those warmly in conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short title, e.g. 'Class', 'Pediatrician appointment'."},
+                "date": {"type": "string", "description": "ISO date YYYY-MM-DD, resolved from what she said using today's actual date."},
+                "time_label": {"type": "string", "description": "Display time like '9:00 AM', if she gave one."},
+                "reminder_hours_before": {"type": "number", "description": "How many hours before the event to remind her. Default to 2 if she didn't specify; use 24 for something she'd want a day's notice for."},
+            },
+            "required": ["title", "date"],
+        },
+    },
+    {
         "name": "log_pump",
         "description": "Log a pumping session. Use when she tells you how long she pumped on each side, or overall, instead of using the on-screen timer.",
         "input_schema": {
@@ -1519,6 +1549,59 @@ async def _execute_chat_tool(name: str, tool_input: dict, device_id: str) -> str
             return f"Real shopping link ready for {recipe['title']}: {result['shopping_url']}"
         except HTTPException as e:
             return f"Couldn't create the shopping link right now: {e.detail}"
+
+    if name == "schedule_nudge":
+        h = await db.households.find_one({"members.device_id": device_id})
+        if not h or len(h.get("members", [])) < 2:
+            return "There's no Tag Team household set up yet, so I can't nudge anyone."
+        target_name = (tool_input.get("target_name") or "").strip().lower()
+        target = next(
+            (m for m in h["members"] if m["device_id"] != device_id and (
+                target_name in (m.get("name") or "").lower()
+                or target_name in (m.get("role") or "").lower()
+                or target_name in (m.get("custom_role") or "").lower()
+            )),
+            None,
+        )
+        if not target:
+            others = ", ".join(m.get("name") or m.get("role", "someone") for m in h["members"] if m["device_id"] != device_id)
+            return f"I couldn't match '{tool_input.get('target_name')}' to anyone in her household. The people she has set up are: {others}."
+        delay_minutes = max(1, min(int(tool_input.get("delay_minutes", 0)), 60 * 24 * 7))  # 1 min to 7 days, sane bounds
+        send_at = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        await db.scheduled_nudges.insert_one({
+            "target_device_id": target["device_id"],
+            "requested_by_device_id": device_id,
+            "message": tool_input.get("message", "").strip() or "Cuddle here — just checking in for her.",
+            "send_at": send_at,  # real datetime, not the usual ISO string — needed for the cron query below
+            "sent": False,
+            "created_at": now_iso(),
+        })
+        when = "in a moment" if delay_minutes < 2 else (
+            f"in {delay_minutes} minutes" if delay_minutes < 60 else f"in about {round(delay_minutes/60, 1)} hours"
+        )
+        return f"Done — I'll nudge {target.get('name') or target.get('role')} {when}."
+
+    if name == "create_event":
+        try:
+            event_date = tool_input.get("date")
+            datetime.fromisoformat(event_date)  # validate it's a real ISO date before trusting it
+        except (ValueError, TypeError):
+            return "I couldn't pin down a real date for that — ask her to confirm the exact date and try again."
+        doc = {
+            "device_id": device_id,
+            "title": tool_input.get("title", "Reminder").strip(),
+            "category": "other",
+            "date": event_date,
+            "time_label": tool_input.get("time_label"),
+            "location": None,
+            "notes": None,
+            "reminder_hours_before": int(tool_input.get("reminder_hours_before", 2)),
+            "source": "voice",
+            "created_at": now_iso(),
+        }
+        await db.personal_events.insert_one(dict(doc))
+        when = doc["date"] + (f" at {doc['time_label']}" if doc["time_label"] else "")
+        return f"Added to her calendar: {doc['title']} on {when}. She'll get a reminder {doc['reminder_hours_before']} hours before."
 
     if name == "tag_team_switch":
         h = await db.households.find_one({"members.device_id": device_id})
@@ -3185,6 +3268,27 @@ async def send_push(device_id: str, title: str, body: str, urgent: bool = False)
         logger.exception("push send failed")
 
 
+async def send_due_scheduled_nudges():
+    """Fires any 'nudge dad in 2 hours'-style requests whose time has come.
+    Real datetime storage (not this file's usual ISO-string convention),
+    same lesson learned with invitations and push tickets — needed for
+    the range query below and for the TTL cleanup index to actually work."""
+    now = datetime.now(timezone.utc)
+    due = await db.scheduled_nudges.find(
+        {"sent": False, "send_at": {"$lte": now}}, {"_id": 0}
+    ).to_list(200)
+    for nudge in due:
+        try:
+            await send_push(nudge["target_device_id"], "Cuddle · A nudge for you", nudge["message"])
+        except Exception:
+            logger.exception("failed to send scheduled nudge to %s", nudge.get("target_device_id"))
+    if due:
+        await db.scheduled_nudges.update_many(
+            {"send_at": {"$lte": now}, "sent": False}, {"$set": {"sent": True, "sent_at": now}}
+        )
+    return {"sent": len(due)}
+
+
 async def prune_dead_push_tokens():
     """Real cleanup, not a guess — asks Expo directly whether each recent
     push actually reached a live device, and removes the token only when
@@ -3353,7 +3457,7 @@ async def cron_tick(x_cron_secret: str = Header(None)):
     if not CRON_SECRET or not _secrets.compare_digest(x_cron_secret or "", CRON_SECRET):
         raise HTTPException(status_code=403, detail="Invalid cron secret")
 
-    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "inactivity": 0, "mom_milestone": 0, "push_pruned": 0, "errors": 0}
+    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "inactivity": 0, "mom_milestone": 0, "push_pruned": 0, "scheduled_nudges_sent": 0, "errors": 0}
 
     # Tag Team fatigue nudges only apply to households with a second member
     # to actually notify.
@@ -3400,6 +3504,16 @@ async def cron_tick(x_cron_secret: str = Header(None)):
         results["push_pruned"] = prune_result.get("pruned", 0)
     except Exception:
         logger.exception("cron: push token pruning failed")
+        results["errors"] += 1
+
+    # Fires any "nudge dad in 2 hours"-style scheduled requests whose
+    # time has actually come — same 5-minute sweep, so worst case a
+    # nudge is a few minutes later than exactly requested.
+    try:
+        nudge_result = await send_due_scheduled_nudges()
+        results["scheduled_nudges_sent"] = nudge_result.get("sent", 0)
+    except Exception:
+        logger.exception("cron: scheduled nudge sending failed")
         results["errors"] += 1
 
     return results
@@ -6090,6 +6204,11 @@ async def on_startup():
         await db.push_ticket_log.create_index("sent_at", expireAfterSeconds=3600 * 24 * 7)
     except Exception:
         logger.exception("failed to ensure push ticket log TTL index")
+
+    try:
+        await db.scheduled_nudges.create_index("send_at", expireAfterSeconds=3600 * 24 * 14)
+    except Exception:
+        logger.exception("failed to ensure scheduled nudges TTL index")
 
 
 @app.on_event("shutdown")
