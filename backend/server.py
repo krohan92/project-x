@@ -24,6 +24,7 @@ import bcrypt
 import smtplib
 from email.mime.text import MIMEText
 import secrets as _secrets
+import hashlib
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -106,10 +107,12 @@ class ChatMoodOptIn(BaseModel):
 
 
 @api_router.patch("/profile/{device_id}/chat-mood-tracking")
-async def set_chat_mood_tracking(device_id: str, body: ChatMoodOptIn):
+async def set_chat_mood_tracking(device_id: str, body: ChatMoodOptIn, verified_device_id: str = Depends(_verify_device)):
     """Explicit opt-in/out for letting Talk to Cuddle conversations also
     inform her mood trends, separate from her deliberate check-ins. Off by
     default; this is the only place it can be turned on."""
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's settings")
     result = await db.profiles.update_one(
         {"device_id": device_id}, {"$set": {"mood_from_chat_opt_in": body.enabled}}
     )
@@ -123,10 +126,12 @@ class UnitSystemUpdate(BaseModel):
 
 
 @api_router.patch("/profile/{device_id}/unit-system")
-async def set_unit_system(device_id: str, body: UnitSystemUpdate):
+async def set_unit_system(device_id: str, body: UnitSystemUpdate, verified_device_id: str = Depends(_verify_device)):
     """Changes how amounts DISPLAY (feeds, pumping) — oz is common in the
     US, ml almost everywhere else. Storage is always ml regardless; this
     only affects what she sees and what export reports say."""
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's settings")
     if body.unit_system not in ("oz", "ml"):
         raise HTTPException(status_code=422, detail="unit_system must be 'oz' or 'ml'")
     result = await db.profiles.update_one(
@@ -185,7 +190,9 @@ async def _infer_mood_from_chat_message(device_id: str, user_message: str):
 
 
 @api_router.get("/export/full-report/{device_id}")
-async def export_full_report(device_id: str, days: int = 90):
+async def export_full_report(device_id: str, days: int = 90, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's export report")
     """The comprehensive 'share everything with your doctor' export —
     feeds, pumping, diapers, baby's sleep, mom's own rest, and meetup
     attendance (a real proxy for social connection, which matters
@@ -300,7 +307,10 @@ async def export_full_report(device_id: str, days: int = 90):
 
 
 @api_router.get("/mood/{device_id}/doctor-report")
-async def mood_doctor_report(device_id: str, days: int = 90):
+async def mood_doctor_report(device_id: str, days: int = 90, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     """A doctor-ready view of her own logged data — a day-by-day heatmap
     plus a short, plain-language pattern summary. This only reflects what
     she explicitly logged in check-ins; it never infers, diagnoses, or adds
@@ -798,6 +808,63 @@ def _create_jwt(user_id: str, device_id: str) -> str:
     return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def _create_device_token(device_id: str) -> str:
+    """Binds a signed token to a device_id — the actual fix for the audit's
+    top finding. Nothing here is a real account: no password, no separate
+    identity, the anonymous-device model stays exactly as lightweight as
+    it's always been. What changes is that from this point on, a request
+    claiming to be a given device_id has to actually hold a token the
+    server itself signed for that device, not just type the string in."""
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    payload = {
+        "device_id": device_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return pyjwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+class DeviceTokenRequest(BaseModel):
+    device_id: str
+
+
+@api_router.post("/auth/device-token")
+async def issue_device_token(body: DeviceTokenRequest):
+    """First call for a given device_id mints its token — same trust
+    level as every existing device_id-based endpoint has always had at
+    that single moment (the server has no way to know who's genuinely
+    behind a brand-new device_id, and neither does any app that works
+    this way). What matters is every call AFTER this one: without this
+    exact signed token, nothing can act as that device_id anymore, which
+    is what closes the real gap — someone simply typing in another
+    person's device_id string no longer gets them anywhere."""
+    token = _create_device_token(body.device_id)
+    return {"token": token, "device_id": body.device_id}
+
+
+async def _verify_device(authorization: str = Header(None)) -> str:
+    """The real enforcement dependency — returns the verified device_id
+    from a valid signed token, or rejects the request outright. Endpoints
+    using this stop trusting a client-supplied device_id parameter and
+    use this return value instead."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing device token")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Auth is not configured on the server (missing JWT_SECRET)")
+    try:
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Device session expired")
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid device token")
+    device_id = payload.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=401, detail="Malformed device token")
+    return device_id
+
+
 async def _current_user(authorization: str = Header(None)) -> dict:
     """Dependency for routes that require a signed-in user. Existing
     device_id-only routes don't use this — this is only for the new
@@ -980,14 +1047,18 @@ async def root():
 
 
 @api_router.post("/profile")
-async def upsert_profile(profile: Profile):
+async def upsert_profile(profile: Profile, verified_device_id: str = Depends(_verify_device)):
+    if profile.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't create/update another device's profile")
     data = profile.model_dump()
     await db.profiles.update_one({"device_id": profile.device_id}, {"$set": data}, upsert=True)
     return data
 
 
 @api_router.get("/profile/{device_id}")
-async def get_profile(device_id: str):
+async def get_profile(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's profile")
     doc = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -1027,7 +1098,9 @@ def _normalize_delivery_type(raw: Optional[str]) -> Optional[str]:
 
 
 @api_router.get("/recovery/timeline/{device_id}")
-async def recovery_timeline(device_id: str):
+async def recovery_timeline(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
     """A real, sourced recovery timeline (ACOG/NHS/Cleveland Clinic-derived,
     see RECOVERY_TIMELINE's own citation note) tailored to her actual
     delivery type and how many weeks out she is. Deliberately general and
@@ -1077,7 +1150,10 @@ async def get_pump_providers():
 
 # ----- Mood -----
 @api_router.post("/mood")
-async def add_mood(entry: MoodEntryCreate):
+async def add_mood(entry: MoodEntryCreate, verified_device_id: str = Depends(_verify_device)):
+    if entry.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     obj = MoodEntry(**entry.model_dump())
     await db.moods.insert_one(obj.model_dump())
 
@@ -1113,13 +1189,23 @@ async def add_mood(entry: MoodEntryCreate):
 
 
 @api_router.post("/encouragement")
-async def send_encouragement(e: EncouragementCreate):
+async def send_encouragement(e: EncouragementCreate, verified_device_id: str = Depends(_verify_device)):
     """The actual message he writes, delivered as its own real push, not
     just a generic 'you have a note' teaser — the words themselves are
     the whole point here."""
+    if e.from_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't send an encouragement as another device")
     message = e.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message can't be empty")
+
+    household = await db.households.find_one({"members.device_id": e.from_device_id})
+    # Without this, anyone could spam a private-feeling encouragement
+    # push to literally any device_id in the system, sender name spoofed
+    # to whatever their real household says. Now the recipient has to
+    # actually be in the sender's own household.
+    if not household or not any(m["device_id"] == e.to_device_id for m in household["members"]):
+        raise HTTPException(status_code=403, detail="Recipient isn't in your household")
 
     doc = {
         "from_device_id": e.from_device_id,
@@ -1131,10 +1217,7 @@ async def send_encouragement(e: EncouragementCreate):
     result = await db.encouragement_messages.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
 
-    household = await db.households.find_one({"members.device_id": e.from_device_id})
-    sender_name = None
-    if household:
-        sender_name = next((m.get("name") for m in household["members"] if m["device_id"] == e.from_device_id), None)
+    sender_name = next((m.get("name") for m in household["members"] if m["device_id"] == e.from_device_id), None)
     await send_push(
         e.to_device_id,
         f"💛 A note from {sender_name or 'someone who cares'}",
@@ -1144,7 +1227,9 @@ async def send_encouragement(e: EncouragementCreate):
 
 
 @api_router.get("/encouragement/{device_id}/latest")
-async def latest_encouragement(device_id: str):
+async def latest_encouragement(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's messages")
     """The most recent message that hasn't been seen yet, for showing on
     her Home screen too, since a push notification alone can be missed
     or accidentally swiped away before it's really read."""
@@ -1155,7 +1240,9 @@ async def latest_encouragement(device_id: str):
 
 
 @api_router.post("/encouragement/{device_id}/mark-seen")
-async def mark_encouragement_seen(device_id: str):
+async def mark_encouragement_seen(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's messages")
     await db.encouragement_messages.update_many(
         {"to_device_id": device_id, "seen": False}, {"$set": {"seen": True}}
     )
@@ -1163,13 +1250,19 @@ async def mark_encouragement_seen(device_id: str):
 
 
 @api_router.get("/mood/{device_id}")
-async def get_moods(device_id: str, limit: int = 60):
+async def get_moods(device_id: str, limit: int = 60, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     docs = await db.moods.find({"device_id": device_id}, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return list(reversed(docs))
 
 
 @api_router.get("/mood/{device_id}/today")
-async def mood_today(device_id: str):
+async def mood_today(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     today = datetime.now(timezone.utc).date().isoformat()
     doc = await db.moods.find_one(
         {"device_id": device_id, "created_at": {"$regex": f"^{today}"}}, {"_id": 0})
@@ -1183,7 +1276,10 @@ async def epds_questions():
 
 
 @api_router.post("/epds")
-async def submit_epds(sub: EpdsSubmit):
+async def submit_epds(sub: EpdsSubmit, verified_device_id: str = Depends(_verify_device)):
+    if sub.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     if len(sub.answers) != len(EPDS_QUESTIONS):
         raise HTTPException(status_code=400, detail="All questions must be answered")
     total = sum(sub.answers)
@@ -1201,15 +1297,25 @@ async def submit_epds(sub: EpdsSubmit):
 
 
 @api_router.get("/epds/{device_id}")
-async def epds_history(device_id: str):
+async def epds_history(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     docs = await db.epds.find({"device_id": device_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return docs
 
 
 # ----- Chat (Claude Sonnet 4.6) -----
 @api_router.get("/chat/{session_id}")
-async def chat_history(session_id: str):
+async def chat_history(session_id: str, verified_device_id: str = Depends(_verify_device)):
     docs = await db.chat_messages.find({"session_id": session_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # A brand-new session with no messages yet is fine to return empty —
+    # nothing to leak. But if messages DO exist, every single one has to
+    # belong to the verified caller, or this session belongs to someone
+    # else and nothing about it should come back, private conversation
+    # content included.
+    if docs and any(d.get("device_id") != verified_device_id for d in docs):
+        raise HTTPException(status_code=403, detail="Not authorized for this conversation")
     return docs
 
 
@@ -1495,7 +1601,14 @@ async def _recent_pattern_summary(device_id: str) -> str:
 
 
 @api_router.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, verified_device_id: str = Depends(_verify_device)):
+    # Without this, anyone could post as any device_id and get the AI to
+    # respond using THAT person's real profile — mood patterns, delivery
+    # details, everything build_system_prompt pulls in — handing private
+    # data back to an attacker inside the AI's own reply. This is at
+    # least as serious as the read-side gap above.
+    if req.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't send a message as another device")
     profile = await db.profiles.find_one({"device_id": req.device_id}, {"_id": 0})
     pattern_summary = await _recent_pattern_summary(req.device_id)
     system_prompt = build_system_prompt(profile, pattern_summary)
@@ -1849,11 +1962,51 @@ class HouseholdCreate(BaseModel):
     role: str = "primary"          # primary / partner / caregiver
 
 
+# The fixed set of things a Care Circle member's access can be granted or
+# withheld for. AI conversations and mental-wellbeing detail are
+# deliberately NOT in this list — those are never a grantable permission,
+# they're hardcoded private everywhere they're read, regardless of what
+# mom sets for someone. This matches the spec's own explicit requirement.
+CARE_CIRCLE_PERMISSION_KEYS = [
+    "baby_tracking", "baby_schedule", "care_shifts", "tasks", "meals",
+    "appointments", "medication_reminders", "mom_recovery", "cuddle_load",
+    "emergency_alerts", "location", "private_notes",
+]
+
+DEFAULT_CARE_CIRCLE_PERMISSIONS = {
+    "baby_tracking": True, "baby_schedule": True, "care_shifts": True,
+    "tasks": True, "meals": True, "appointments": True,
+    "medication_reminders": True, "mom_recovery": False, "cuddle_load": False,
+    "emergency_alerts": True, "location": False, "private_notes": False,
+}
+
+
 class HouseholdJoin(BaseModel):
     device_id: str
     household_code: str
     name: str
     role: str = "partner"
+    custom_role: Optional[str] = None   # "Nani", "Postpartum Doula", "Sister", etc. — shown instead of role when set
+    permissions: Optional[dict] = None  # subset of CARE_CIRCLE_PERMISSION_KEYS; unset keys fall back to the default
+
+
+def _sanitize_permissions(permissions: Optional[dict]) -> dict:
+    """Never trust a client-supplied permissions dict wholesale — only the
+    real, known keys are kept, and anything missing falls back to a safe
+    default rather than silently granting access to something new."""
+    result = dict(DEFAULT_CARE_CIRCLE_PERMISSIONS)
+    if permissions:
+        for k, v in permissions.items():
+            if k in CARE_CIRCLE_PERMISSION_KEYS and isinstance(v, bool):
+                result[k] = v
+    return result
+
+
+class CareCirclePermissionsUpdate(BaseModel):
+    household_code: str
+    requesting_device_id: str   # must be the household's primary — enforced below
+    target_device_id: str       # whose permissions are being changed
+    permissions: dict
 
 
 class HandoffSwitch(BaseModel):
@@ -2064,7 +2217,9 @@ class BrainNoteCreate(BaseModel):
 
 
 @api_router.post("/brain-notes")
-async def create_brain_note(n: BrainNoteCreate):
+async def create_brain_note(n: BrainNoteCreate, verified_device_id: str = Depends(_verify_device)):
+    if n.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't create a note as another device")
     doc = {
         "device_id": n.device_id, "text": n.text, "category": n.category or "other",
         "done": False, "created_at": now_iso(),
@@ -2076,7 +2231,9 @@ async def create_brain_note(n: BrainNoteCreate):
 
 
 @api_router.get("/brain-notes/{device_id}")
-async def list_brain_notes(device_id: str, include_done: bool = False):
+async def list_brain_notes(device_id: str, include_done: bool = False, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's notes")
     query: dict = {"device_id": device_id}
     if not include_done:
         query["done"] = False
@@ -2087,13 +2244,27 @@ async def list_brain_notes(device_id: str, include_done: bool = False):
 
 
 @api_router.patch("/brain-notes/{note_id}/done")
-async def complete_brain_note(note_id: str):
+async def complete_brain_note(note_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    # Previously took no device_id at all — anyone who knew or guessed a
+    # note_id (a MongoDB ObjectId, not cryptographically random) could
+    # mark any note done. Now checks the note actually belongs to the
+    # verified caller before touching it.
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    note = await db.brain_notes.find_one({"_id": ObjectId(note_id)})
+    if not note or note.get("device_id") != verified_device_id:
+        raise HTTPException(status_code=404, detail="Note not found")
     await db.brain_notes.update_one({"_id": ObjectId(note_id)}, {"$set": {"done": True}})
     return {"ok": True}
 
 
 @api_router.delete("/brain-notes/{note_id}")
-async def delete_brain_note(note_id: str):
+async def delete_brain_note(note_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    note = await db.brain_notes.find_one({"_id": ObjectId(note_id)})
+    if not note or note.get("device_id") != verified_device_id:
+        raise HTTPException(status_code=404, detail="Note not found")
     await db.brain_notes.delete_one({"_id": ObjectId(note_id)})
     return {"ok": True}
 
@@ -2131,7 +2302,9 @@ async def nearby_meta():
 
 
 @api_router.patch("/nearby/settings")
-async def update_nearby_settings(s: NearbySettings):
+async def update_nearby_settings(s: NearbySettings, verified_device_id: str = Depends(_verify_device)):
+    if s.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's settings")
     update = {k: v for k, v in s.model_dump().items() if k != "device_id" and v is not None}
     if update:
         await db.profiles.update_one({"device_id": s.device_id}, {"$set": update}, upsert=True)
@@ -2140,7 +2313,9 @@ async def update_nearby_settings(s: NearbySettings):
 
 
 @api_router.delete("/nearby/ethnicity/{device_id}")
-async def delete_ethnicity(device_id: str):
+async def delete_ethnicity(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's settings")
     # Fully remove the optional cultural data and disable cultural matching.
     await db.profiles.update_one(
         {"device_id": device_id},
@@ -2153,7 +2328,9 @@ async def delete_ethnicity(device_id: str):
 
 # ----- Presence -----
 @api_router.post("/presence/toggle")
-async def presence_toggle(p: PresenceToggle):
+async def presence_toggle(p: PresenceToggle, verified_device_id: str = Depends(_verify_device)):
+    if p.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't toggle presence as another device")
     doc = {"device_id": p.device_id, "awake": p.awake, "last_active": now_iso()}
     if p.awake and p.lat is not None and p.lng is not None:
         # jitter immediately; store ONLY the randomized location, discard raw.
@@ -2165,7 +2342,9 @@ async def presence_toggle(p: PresenceToggle):
 
 
 @api_router.get("/presence/active")
-async def presence_active(device_id: str):
+async def presence_active(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized to request as this device")
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
     reals = await db.presence.find(
         {"awake": True, "last_active": {"$gte": cutoff}, "device_id": {"$ne": device_id}}
@@ -2197,7 +2376,21 @@ async def presence_active(device_id: str):
 
 # ----- Baby tracker -----
 @api_router.post("/baby-log")
-async def baby_log(b: BabyLogCreate):
+async def baby_log(b: BabyLogCreate, verified_device_id: str = Depends(_verify_device)):
+    # Writing a log claiming to be someone else's device_id is a real,
+    # separate attack from reading someone else's data — this closes it:
+    # you can only ever create an entry as the device your token proves
+    # you are, never on another household member's behalf.
+    if b.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't log an entry as another device")
+    # Being verified as yourself doesn't automatically mean you're allowed
+    # to write into a shared household record — someone without
+    # baby_tracking permission shouldn't be able to log entries either,
+    # matching the same permission reads already require. Solo devices
+    # (no household) have nothing to check here.
+    h = await db.households.find_one({"members.device_id": b.device_id}, {"_id": 0})
+    if h and not _member_has_permission(h, b.device_id, "baby_tracking"):
+        raise HTTPException(status_code=403, detail="No baby tracking permission for this household")
     doc = {
         "device_id": b.device_id,
         "kind": b.kind,
@@ -2215,11 +2408,12 @@ async def baby_log(b: BabyLogCreate):
 
 
 @api_router.get("/feed/next-side/{device_id}")
-async def feed_next_side(device_id: str):
+async def feed_next_side(device_id: str, verified_device_id: str = Depends(_verify_device)):
     """Which side to start breastfeeding on next, based on the last side
     actually logged — alternating is the standard guidance, so this just
     flips whatever she used last. Returns None if there's no recent
     breastfeeding side data to go on, rather than guessing."""
+    await _authorize_baby_data_access(device_id, verified_device_id)
     last = await db.baby_logs.find_one(
         {"device_id": device_id, "kind": "feed", "side": {"$in": ["left", "right"]}},
         {"_id": 0}, sort=[("at", -1)]
@@ -2308,7 +2502,9 @@ def _pump_side_live_seconds(session: dict, side: str) -> int:
 
 
 @api_router.post("/pump-session/toggle")
-async def pump_session_toggle(body: PumpToggle):
+async def pump_session_toggle(body: PumpToggle, verified_device_id: str = Depends(_verify_device)):
+    if body.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't control another device's pump timer")
     """One tap starts that side's timer; tapping again stops it and banks
     the elapsed time. Left and right are independent — start one, then the
     other, for a real dual pump, or do them one at a time. Nothing is
@@ -2344,7 +2540,9 @@ async def pump_session_toggle(body: PumpToggle):
 
 
 @api_router.get("/pump-session/active/{device_id}")
-async def pump_session_active(device_id: str):
+async def pump_session_active(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's pump data")
     """Current live state — both sides' running status and elapsed time so
     far, for the UI to render two live-ticking timers."""
     session = await _get_or_create_pump_session(device_id)
@@ -2384,7 +2582,9 @@ async def _finish_pump_session(device_id: str, left_ml: Optional[float] = None, 
 
 
 @api_router.get("/pump-session/insight/{device_id}")
-async def pump_session_insight(device_id: str, days: int = 14):
+async def pump_session_insight(device_id: str, days: int = 14, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's pump data")
     """Looks at her actual pump history and tells her, honestly, whether
     one side has been consistently producing less — using real output
     volume when she's logged it, and falling back to time invested per
@@ -2441,7 +2641,9 @@ async def pump_session_insight(device_id: str, days: int = 14):
 
 
 @api_router.get("/pump-session/trend/{device_id}")
-async def pump_session_trend(device_id: str, days: int = 14):
+async def pump_session_trend(device_id: str, days: int = 14, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's pump data")
     """Daily total output over time — the same volume data behind the
     side-comparison, rolled up per day instead of per side. Useful for two
     different real situations: noticing supply trending down, or tracking
@@ -2478,7 +2680,9 @@ class PumpSymptomCheck(BaseModel):
 
 
 @api_router.post("/pump-session/symptom-check")
-async def pump_symptom_check(body: PumpSymptomCheck):
+async def pump_symptom_check(body: PumpSymptomCheck, verified_device_id: str = Depends(_verify_device)):
+    if body.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't log a symptom check for another device")
     """A real safety feature, not just convenience: an ongoing output
     imbalance between sides is a genuine risk factor for a clogged duct or
     mastitis. This logs her answer and, if she reports symptoms, returns
@@ -2509,24 +2713,33 @@ class PumpFinish(BaseModel):
 
 
 @api_router.post("/pump-session/finish/{device_id}")
-async def pump_session_finish(device_id: str, body: PumpFinish = PumpFinish()):
+async def pump_session_finish(device_id: str, body: PumpFinish = PumpFinish(), verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's pump data")
     return await _finish_pump_session(device_id, body.left_ml, body.right_ml)
 
 
 @api_router.post("/sleep-session/start")
-async def sleep_session_start(s: SleepSessionStart):
+async def sleep_session_start(s: SleepSessionStart, verified_device_id: str = Depends(_verify_device)):
     """Live start/stop timing, more accurate than guessing a duration after
     the fact. 'self' sessions (a caregiver resting, not the baby) are what
     make this genuinely different from a typical baby-only tracker: the
     other caregiver in the household can see it happening in real time.
     """
+    if s.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't start a session as another device")
+    if s.subject == "baby":
+        h = await db.households.find_one({"members.device_id": s.device_id}, {"_id": 0})
+        if h and not _member_has_permission(h, s.device_id, "baby_tracking"):
+            raise HTTPException(status_code=403, detail="No baby tracking permission for this household")
     return await _start_sleep_session(s.device_id, s.subject)
 
 
 @api_router.get("/sleep-session/active/{device_id}")
-async def sleep_session_active(device_id: str):
+async def sleep_session_active(device_id: str, verified_device_id: str = Depends(_verify_device)):
     """Everything currently in progress that this household can see: baby's
     nap if anyone started one, and any caregiver's own rest session too."""
+    await _authorize_baby_data_access(device_id, verified_device_id)
     device_ids = await _household_device_ids(device_id)
     sessions = await db.active_sleep_sessions.find(
         {"owner_device_id": {"$in": device_ids}}, {"_id": 0}
@@ -2544,12 +2757,17 @@ async def sleep_session_active(device_id: str):
 
 
 @api_router.post("/sleep-session/stop")
-async def sleep_session_stop(s: SleepSessionStop):
+async def sleep_session_stop(s: SleepSessionStop, verified_device_id: str = Depends(_verify_device)):
     """Baby sessions can be stopped by any caregiver in the household (the
     one who notices baby waking up isn't always the one who started the
     nap timer). A caregiver's own 'self' rest session can only be stopped
     by that same device, since nobody else should end someone else's rest
     for them."""
+    if s.subject == "self":
+        if s.device_id != verified_device_id:
+            raise HTTPException(status_code=403, detail="Only that device can end its own rest session")
+    else:
+        await _authorize_baby_data_access(s.device_id, verified_device_id)
     result = await _stop_sleep_session(s.device_id, s.subject)
     if result is None:
         raise HTTPException(status_code=404, detail="No active session found")
@@ -2557,7 +2775,8 @@ async def sleep_session_stop(s: SleepSessionStop):
 
 
 @api_router.get("/baby-log/{device_id}")
-async def baby_logs(device_id: str, limit: int = 50):
+async def baby_logs(device_id: str, limit: int = 50, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
     # Combined across the whole household, same as /summary and
     # /predictions already do — otherwise Dad's feed wouldn't show up in
     # Mom's recent activity list, even though the totals above it would
@@ -2595,8 +2814,26 @@ async def _household_device_ids(device_id: str) -> List[str]:
     return [m["device_id"] for m in h["members"]]
 
 
+async def _authorize_baby_data_access(target_device_id: str, verified_device_id: str) -> None:
+    """The real family-scoped check the security audit asked for: a
+    household member is only allowed to read another member's baby data
+    if BOTH are true — they're actually in the same household, AND their
+    specific permissions grant baby_tracking. Being 'in the family' alone
+    is not enough, matching the explicit requirement not to treat family
+    membership as blanket access. Raises 403 rather than returning a
+    bool, so every call site fails closed by default."""
+    if target_device_id == verified_device_id:
+        return
+    h = await db.households.find_one({"members.device_id": target_device_id}, {"_id": 0})
+    if not h or not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
+    if not _member_has_permission(h, verified_device_id, "baby_tracking"):
+        raise HTTPException(status_code=403, detail="No baby tracking permission for this household")
+
+
 @api_router.get("/baby-log/{device_id}/summary")
-async def baby_log_summary(device_id: str):
+async def baby_log_summary(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
     """Today's totals, combined across the whole household (so Dad's feeds
     count toward the same daily total as Mom's, not two separate tallies)."""
     device_ids = await _household_device_ids(device_id)
@@ -2764,7 +3001,6 @@ def _predict_next_sleep(logs: List[dict], min_samples: int = 3, max_samples: int
     }
 
 
-@api_router.get("/baby-log/{device_id}/predictions")
 async def baby_log_predictions(device_id: str):
     """'Based on your own recent logs, here's roughly when to expect the
     next one' — for feeds, pee, and poop. Learns only from this baby's own
@@ -2802,6 +3038,12 @@ async def baby_log_predictions(device_id: str):
     }
 
 
+@api_router.get("/baby-log/{device_id}/predictions")
+async def baby_log_predictions_route(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
+    return await baby_log_predictions(device_id)
+
+
 PLAYFUL_BALANCE_LINES = [
     "{leader} has logged {pct}% of today's baby duties — {other}, the tag-team jersey is right there 👕",
     "{leader}'s on a bit of a streak today ({pct}% of the logs) — {other}, MVP substitution opportunity available",
@@ -2810,11 +3052,13 @@ PLAYFUL_BALANCE_LINES = [
 
 
 @api_router.get("/handoff/balance/{household_code}")
-async def handoff_balance(household_code: str):
+async def handoff_balance(household_code: str, verified_device_id: str = Depends(_verify_device)):
     """A light, funny nudge about today's workload split — deliberately the
     one playful voice in an otherwise gentle app, since a little humor here
     lands better than more heavy language about who's 'behind'."""
     h = await _get_household(household_code)
+    if not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
     today = datetime.now(timezone.utc).date().isoformat()
     logs = await db.baby_logs.find(
         {"device_id": {"$in": [m["device_id"] for m in h["members"]]}, "at": {"$gte": today}},
@@ -2907,13 +3151,86 @@ async def send_push(device_id: str, title: str, body: str, urgent: bool = False)
             payload["priority"] = "high"
             payload["channelId"] = "sos"
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(EXPO_PUSH_URL, json=payload)
+            resp = await client.post(EXPO_PUSH_URL, json=payload)
+            data = resp.json()
+        ticket = (data.get("data") or {})
+        if ticket.get("status") == "error":
+            # A same-request rejection — usually a genuinely malformed
+            # token, not "device uninstalled" (that case comes back OK
+            # here and only shows up later in the receipt check below).
+            # Dead either way, so remove it now rather than waiting.
+            if ticket.get("details", {}).get("error") == "DeviceNotRegistered":
+                await db.push_tokens.delete_one({"device_id": device_id})
+        elif ticket.get("id"):
+            # Real delivery only gets attempted by Apple/Google after this
+            # point, asynchronously — Expo's own guidance is to check the
+            # receipt some minutes later, not immediately. Logged here;
+            # prune_dead_push_tokens (in the cron sweep) checks it later.
+            # sent_at is a real datetime, not this file's usual ISO-string
+            # convention — needed for the TTL index below to actually work,
+            # same lesson learned earlier with the invitations collection.
+            await db.push_ticket_log.insert_one({
+                "device_id": device_id, "ticket_id": ticket["id"],
+                "sent_at": datetime.now(timezone.utc), "checked": False,
+            })
     except Exception:
         logger.exception("push send failed")
 
 
+async def prune_dead_push_tokens():
+    """Real cleanup, not a guess — asks Expo directly whether each recent
+    push actually reached a live device, and removes the token only when
+    Expo itself confirms it's gone (DeviceNotRegistered), never based on
+    silence or a timeout alone. This is what stops someone who deleted
+    and reinstalled the app from quietly accumulating duplicate 'devices'
+    that all keep receiving every notification forever."""
+    # Only check tickets old enough for Apple/Google to have actually
+    # tried delivery — checking too early just gets an empty receipt.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    pending = await db.push_ticket_log.find(
+        {"checked": False, "sent_at": {"$lte": cutoff}}, {"_id": 0}
+    ).to_list(500)
+    if not pending:
+        return {"checked": 0, "pruned": 0}
+
+    id_to_device = {t["ticket_id"]: t["device_id"] for t in pending}
+    ticket_ids = list(id_to_device.keys())
+    pruned = 0
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://exp.host/--/api/v2/push/getReceipts",
+                json={"ids": ticket_ids},
+                headers={"Content-Type": "application/json"},
+            )
+            receipts = (resp.json() or {}).get("data", {})
+    except Exception:
+        logger.exception("push receipt check failed")
+        return {"checked": 0, "pruned": 0}
+
+    for ticket_id, receipt in receipts.items():
+        device_id = id_to_device.get(ticket_id)
+        if not device_id:
+            continue
+        if receipt.get("status") == "error" and receipt.get("details", {}).get("error") == "DeviceNotRegistered":
+            await db.push_tokens.delete_one({"device_id": device_id})
+            pruned += 1
+
+    checked_ids = list(receipts.keys())
+    if checked_ids:
+        await db.push_ticket_log.update_many(
+            {"ticket_id": {"$in": checked_ids}}, {"$set": {"checked": True}}
+        )
+    return {"checked": len(checked_ids), "pruned": pruned}
+
+
 @api_router.post("/push/register")
-async def register_push_token(p: PushRegister):
+async def register_push_token(p: PushRegister, verified_device_id: str = Depends(_verify_device)):
+    # Without this, anyone could register a fake push token for another
+    # device_id, hijacking that person's notifications — SOS alerts,
+    # encouragement messages, everything — to a device that isn't theirs.
+    if p.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't register a push token for another device")
     await db.push_tokens.update_one(
         {"device_id": p.device_id},
         {"$set": {"device_id": p.device_id, "expo_push_token": p.expo_push_token, "updated_at": now_iso()}},
@@ -3028,7 +3345,7 @@ async def cron_tick(x_cron_secret: str = Header(None)):
     if not CRON_SECRET or not _secrets.compare_digest(x_cron_secret or "", CRON_SECRET):
         raise HTTPException(status_code=403, detail="Invalid cron secret")
 
-    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "inactivity": 0, "errors": 0}
+    results = {"tag_team": 0, "feed": 0, "sleep": 0, "poop": 0, "wellbeing": 0, "events": 0, "proactive": 0, "inactivity": 0, "mom_milestone": 0, "push_pruned": 0, "errors": 0}
 
     # Tag Team fatigue nudges only apply to households with a second member
     # to actually notify.
@@ -3056,6 +3373,7 @@ async def cron_tick(x_cron_secret: str = Header(None)):
             ("events", check_event_reminders),
             ("proactive", proactive_ai_checkin),
             ("inactivity", inactivity_reminder),
+            ("mom_milestone", mom_milestone_check),
         ]
         for key, fn in checks:
             try:
@@ -3065,11 +3383,170 @@ async def cron_tick(x_cron_secret: str = Header(None)):
                 logger.exception("cron: %s check failed for device %s", key, device_id)
                 results["errors"] += 1
 
+    # Once per sweep, not once per device — checks recent push delivery
+    # receipts and removes any token Expo confirms is dead, so someone
+    # who deleted and reinstalled the app stops accumulating duplicate
+    # devices that all keep getting every notification forever.
+    try:
+        prune_result = await prune_dead_push_tokens()
+        results["push_pruned"] = prune_result.get("pruned", 0)
+    except Exception:
+        logger.exception("cron: push token pruning failed")
+        results["errors"] += 1
+
     return results
 
 
 def _make_household_code() -> str:
     return uuid.uuid4().hex[:6].upper()
+
+
+# ----- Secure invitations (replaces the household_code as a bearer credential) -----
+# The 6-character household_code above stays for one purpose only now:
+# looking up a household when creating it and for the legacy join path
+# kept alive for existing deep links (see join_household). It is
+# deliberately NEVER treated as an ongoing access credential — after this
+# point, real household access always runs through authenticated
+# device + membership + permission, exactly as Groups 1-4 already
+# enforce. Invitations below are the new, actual way to add someone.
+INVITE_EXPIRE_HOURS = 72  # centralized, not hard-coded per call site
+
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+class InviteCreate(BaseModel):
+    household_code: str
+    requesting_device_id: str
+    role: str = "partner"
+    custom_role: Optional[str] = None
+    permissions: Optional[dict] = None
+
+
+class InviteAccept(BaseModel):
+    token: str
+    device_id: str
+    name: str
+
+
+@api_router.post("/household/invite")
+async def create_invite(body: InviteCreate, verified_device_id: str = Depends(_verify_device)):
+    """Mom (or another primary) generates a real invitation — a
+    cryptographically random token, shown to her exactly once, expiring
+    on its own, and usable exactly one time. This is what an invite link
+    or QR code should actually encode, not the household_code itself."""
+    if body.requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    h = await _get_household(body.household_code)
+    requester = next((m for m in h["members"] if m["device_id"] == verified_device_id), None)
+    if not requester or requester.get("role") != "primary":
+        raise HTTPException(status_code=403, detail="Only the primary household member can invite")
+    if body.role == "primary":
+        raise HTTPException(status_code=403, detail="Can't invite someone directly as primary")
+
+    raw_token = _secrets.token_urlsafe(32)  # ~256 bits — not guessable, not Math.random/uuid/timestamp-based
+    invitation_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=INVITE_EXPIRE_HOURS)
+    await db.household_invitations.insert_one({
+        "invitation_id": invitation_id,
+        "household_code": body.household_code,
+        "created_by": verified_device_id,
+        "intended_role": body.role,
+        "custom_role": body.custom_role,
+        "permissions": _sanitize_permissions(body.permissions),
+        "token_hash": _hash_invite_token(raw_token),  # raw token never stored, only its hash
+        "created_at": now.isoformat(),
+        # Stored as a real datetime (not the usual ISO string convention
+        # elsewhere in this file) specifically because MongoDB's TTL
+        # auto-cleanup only fires on genuine BSON Date fields — an ISO
+        # string here would silently never expire via the index below,
+        # even though the manual expiry check in accept_invite would
+        # still work fine on its own.
+        "expires_at": expires_at,
+        "accepted_at": None,
+        "accepted_by": None,
+        "revoked_at": None,
+        "status": "pending",
+    })
+    # The raw token is returned exactly once, right here — it's never
+    # retrievable again after this response, matching "store only a hash."
+    return {"invitation_id": invitation_id, "token": raw_token, "expires_at": expires_at.isoformat()}
+
+
+@api_router.post("/household/invite/accept")
+async def accept_invite(body: InviteAccept, verified_device_id: str = Depends(_verify_device)):
+    """Atomic accept — the find+update happens as one operation so two
+    concurrent acceptance attempts can never both succeed against the
+    same invitation, closing the race condition the spec explicitly
+    called out. Deliberately vague on failure ('invalid or expired')
+    rather than distinguishing wrong-vs-expired-vs-used, so a failed
+    attempt can't be used to probe which case applies."""
+    if body.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't accept an invitation as another device")
+
+    # Simple, real rate limit using the project's own database rather than
+    # a new library — five attempts per device per hour is generous for a
+    # real person, punishing for a brute-force script trying random tokens.
+    window_start = datetime.now(timezone.utc) - timedelta(hours=1)
+    recent_attempts = await db.invite_attempt_log.count_documents(
+        {"device_id": verified_device_id, "at": {"$gte": window_start}}
+    )
+    if recent_attempts >= 5:
+        raise HTTPException(status_code=429, detail="Too many attempts — try again later")
+    await db.invite_attempt_log.insert_one({"device_id": verified_device_id, "at": datetime.now(timezone.utc)})
+
+    token_hash = _hash_invite_token(body.token)
+    now = datetime.now(timezone.utc)
+    generic_error = HTTPException(status_code=400, detail="That invitation is invalid or expired")
+
+    invite = await db.household_invitations.find_one_and_update(
+        {"token_hash": token_hash, "status": "pending", "expires_at": {"$gte": now}},
+        {"$set": {"status": "accepted", "accepted_at": now.isoformat(), "accepted_by": body.device_id}},
+    )
+    if not invite:
+        raise generic_error
+
+    h = await _get_household(invite["household_code"])
+    if not any(m["device_id"] == body.device_id for m in h["members"]):
+        await db.households.update_one(
+            {"household_code": invite["household_code"]},
+            {"$push": {"members": {
+                "device_id": body.device_id, "name": body.name, "role": invite["intended_role"],
+                "custom_role": invite.get("custom_role"), "permissions": invite["permissions"],
+            }}},
+        )
+    return await _get_household(invite["household_code"])
+
+
+@api_router.delete("/household/invite/{invitation_id}")
+async def revoke_invite(invitation_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    invite = await db.household_invitations.find_one({"invitation_id": invitation_id}, {"_id": 0})
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    if invite["created_by"] != verified_device_id:
+        raise HTTPException(status_code=403, detail="Only whoever created this invitation can revoke it")
+    await db.household_invitations.update_one(
+        {"invitation_id": invitation_id, "status": "pending"},
+        {"$set": {"status": "revoked", "revoked_at": now_iso()}},
+    )
+    return {"status": "revoked"}
+
+
+@api_router.get("/household/invite/pending/{household_code}")
+async def pending_invites(household_code: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    h = await _get_household(household_code)
+    if not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
+    invites = await db.household_invitations.find(
+        {"household_code": household_code, "status": "pending"}, {"_id": 0, "token_hash": 0}
+    ).to_list(50)
+    return invites
 
 
 async def _get_household(code: str):
@@ -3080,11 +3557,17 @@ async def _get_household(code: str):
 
 
 @api_router.post("/household")
-async def create_household(h: HouseholdCreate):
+async def create_household(h: HouseholdCreate, verified_device_id: str = Depends(_verify_device)):
+    if h.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't create a household as another device")
     code = _make_household_code()
+    # The creator (mom, in practice) gets every permission by default —
+    # she's not a caregiver being granted access to her own household.
+    full_permissions = {k: True for k in CARE_CIRCLE_PERMISSION_KEYS}
     doc = {
         "household_code": code,
-        "members": [{"device_id": h.device_id, "name": h.name, "role": h.role}],
+        "members": [{"device_id": h.device_id, "name": h.name, "role": h.role,
+                      "custom_role": None, "permissions": full_permissions}],
         "on_duty_device_id": h.device_id,
         "on_duty_since": now_iso(),
         "created_at": now_iso(),
@@ -3095,19 +3578,153 @@ async def create_household(h: HouseholdCreate):
 
 
 @api_router.post("/household/join")
-async def join_household(j: HouseholdJoin):
+async def join_household(j: HouseholdJoin, verified_device_id: str = Depends(_verify_device)):
+    # LEGACY PATH — kept alive only for existing deep links/installed
+    # clients that predate the real invitation system below
+    # (POST /household/invite + /household/invite/accept). New joins
+    # should go through that instead: a household_code alone is
+    # permanent and reusable by design, exactly what this whole change
+    # was meant to stop being the actual access credential. Not removed
+    # yet, per the explicit migration requirement not to abruptly break
+    # existing members — safe to disable once the frontend is confirmed
+    # switched over to the new invite flow.
+    if j.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't join a household as another device")
     h = await _get_household(j.household_code)
     if not any(m["device_id"] == j.device_id for m in h["members"]):
+        # A real Care Circle can be more than the original 2-person Tag
+        # Team pair — anyone joining beyond that gets whatever permissions
+        # mom set at invite time (or the safe defaults), never full access
+        # by default the way the household creator gets. "primary" is
+        # deliberately never accepted from the client here — the one
+        # existing primary member already holds that role from when the
+        # household was created; letting a joiner claim it themselves
+        # would hand them full permission-changing authority over
+        # everyone else, exactly the privilege escalation this endpoint
+        # has to prevent.
+        safe_role = j.role if j.role != "primary" else "partner"
         await db.households.update_one(
             {"household_code": j.household_code},
-            {"$push": {"members": {"device_id": j.device_id, "name": j.name, "role": j.role}}},
+            {"$push": {"members": {
+                "device_id": j.device_id, "name": j.name, "role": safe_role,
+                "custom_role": j.custom_role, "permissions": _sanitize_permissions(j.permissions),
+            }}},
         )
     h = await _get_household(j.household_code)
     return h
 
 
+@api_router.get("/household/{household_code}/care-circle")
+async def get_care_circle(household_code: str, verified_device_id: str = Depends(_verify_device)):
+    """The full roster with each person's role and real permissions — the
+    listing screen mom uses to see and manage who's in her circle."""
+    h = await _get_household(household_code)
+    if not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
+    return {"household_code": household_code, "members": h["members"]}
+
+
+@api_router.patch("/household/care-circle/permissions")
+async def update_care_circle_permissions(body: CareCirclePermissionsUpdate, verified_device_id: str = Depends(_verify_device)):
+    """Only the household's own primary member can change anyone's
+    permissions — enforced here, not just hidden in the UI. Sanitized the
+    same way join does, so a caregiver can never grant themselves
+    something mom didn't explicitly turn on. The requesting_device_id in
+    the body is no longer trusted on its own — it has to match the
+    device_id the caller's actual signed token proves they are."""
+    if body.requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    h = await _get_household(body.household_code)
+    requester = next((m for m in h["members"] if m["device_id"] == body.requesting_device_id), None)
+    if not requester or requester.get("role") != "primary":
+        raise HTTPException(status_code=403, detail="Only the primary household member can change permissions")
+    if not any(m["device_id"] == body.target_device_id for m in h["members"]):
+        raise HTTPException(status_code=404, detail="That person isn't in this household")
+
+    clean = _sanitize_permissions(body.permissions)
+    await db.households.update_one(
+        {"household_code": body.household_code, "members.device_id": body.target_device_id},
+        {"$set": {"members.$.permissions": clean}},
+    )
+    return {"device_id": body.target_device_id, "permissions": clean}
+
+
+def _member_has_permission(household: dict, device_id: str, permission_key: str) -> bool:
+    """The real database-level enforcement the spec asks for — call this
+    before returning anything sensitive to a Care Circle member, rather
+    than relying on the app to simply not show it in the UI."""
+    member = next((m for m in household.get("members", []) if m["device_id"] == device_id), None)
+    if not member:
+        return False
+    return member.get("permissions", DEFAULT_CARE_CIRCLE_PERMISSIONS).get(permission_key, False)
+
+
+@api_router.get("/household/{household_code}/mom-status")
+async def care_circle_mom_status(household_code: str, viewer_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    """What a Care Circle member actually sees when they open the app —
+    built section by section from their REAL permissions, checked against
+    the database on every call, not filtered client-side. Someone without
+    a given permission gets that section omitted entirely, not just
+    hidden in the UI; the data never leaves the server for them.
+    viewer_device_id must match the caller's actual verified token — this
+    is the fix for the audit's top finding: before this, anyone who knew
+    or guessed a household_code and a member's device_id string could
+    call this and get real data back with nothing to stop them."""
+    if viewer_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requested viewer")
+    h = await _get_household(household_code)
+    if not any(m["device_id"] == viewer_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
+
+    primary = next((m for m in h["members"] if m["role"] == "primary"), h["members"][0])
+    mom_device_id = primary["device_id"]
+    result: dict = {"household_code": household_code}
+
+    if _member_has_permission(h, viewer_device_id, "baby_tracking"):
+        last_feed = await db.baby_logs.find_one({"device_id": mom_device_id, "kind": "feed"}, {"_id": 0}, sort=[("at", -1)])
+        last_diaper = await db.baby_logs.find_one({"device_id": mom_device_id, "kind": "diaper"}, {"_id": 0}, sort=[("at", -1)])
+        last_sleep = await db.baby_logs.find_one({"device_id": mom_device_id, "kind": "sleep"}, {"_id": 0}, sort=[("at", -1)])
+        result["baby_tracking"] = {"last_feed": last_feed, "last_diaper": last_diaper, "last_sleep": last_sleep}
+
+    if _member_has_permission(h, viewer_device_id, "care_shifts"):
+        score = await compute_handoff_score(h)
+        result["care_shifts"] = {"on_duty_device_id": h.get("on_duty_device_id"), "hours_on_duty": score.get("hours_on_duty")}
+
+    if _member_has_permission(h, viewer_device_id, "cuddle_load"):
+        result["cuddle_load"] = await compute_handoff_score(h)
+
+    if _member_has_permission(h, viewer_device_id, "mom_recovery"):
+        recent_mood = await db.moods.find_one({"device_id": mom_device_id}, {"_id": 0}, sort=[("created_at", -1)])
+        # Deliberately just the mood NUMBER and whether she's checked in
+        # recently — never her written notes or AI conversation content,
+        # which stay private regardless of this permission.
+        result["mom_recovery"] = {
+            "has_recent_checkin": bool(recent_mood),
+            "mood_score": recent_mood.get("mood") if recent_mood else None,
+        }
+
+    if _member_has_permission(h, viewer_device_id, "appointments"):
+        upcoming = await db.personal_events.find(
+            {"device_id": mom_device_id, "date": {"$gte": datetime.now(timezone.utc).date().isoformat()}}, {"_id": 0}
+        ).sort("date", 1).limit(5).to_list(5)
+        result["appointments"] = upcoming
+
+    return result
+
+
 @api_router.patch("/household/role")
-async def update_role(r: RoleUpdate):
+@api_router.patch("/household/role")
+async def update_role(r: RoleUpdate, verified_device_id: str = Depends(_verify_device)):
+    # This had NO authorization at all before this fix — any caller could
+    # change ANY member's role to anything, including granting themselves
+    # "primary" and, through that, full permission-changing authority
+    # over the whole household. Now: you can only ever update your own
+    # role entry, and "primary" is never an acceptable value here at
+    # all — that role is only ever set once, at household creation.
+    if r.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't change another member's role")
+    if r.role == "primary":
+        raise HTTPException(status_code=403, detail="Can't self-assign the primary role")
     h = await _get_household(r.household_code)
     if not any(m["device_id"] == r.device_id for m in h["members"]):
         raise HTTPException(status_code=404, detail="Not a member of this household")
@@ -3119,7 +3736,9 @@ async def update_role(r: RoleUpdate):
 
 
 @api_router.get("/household/by-device/{device_id}")
-async def household_for_device(device_id: str):
+async def household_for_device(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's household")
     h = await db.households.find_one({"members.device_id": device_id}, {"_id": 0})
     return h  # None if not part of a household yet
 
@@ -3267,8 +3886,10 @@ async def compute_handoff_score(household: dict) -> dict:
 
 
 @api_router.get("/handoff/score/{household_code}")
-async def handoff_score(household_code: str):
+async def handoff_score(household_code: str, verified_device_id: str = Depends(_verify_device)):
     h = await _get_household(household_code)
+    if not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
     return await compute_handoff_score(h)
 
 
@@ -3279,10 +3900,18 @@ class SOSRequest(BaseModel):
 
 
 @api_router.post("/handoff/sos")
-async def handoff_sos(s: SOSRequest):
+async def handoff_sos(s: SOSRequest, verified_device_id: str = Depends(_verify_device)):
     """One tap, no calling. Fires immediately — no score threshold, no
-    once-a-day cap. This is for right now, not a nudge."""
+    once-a-day cap. This is for right now, not a nudge. Previously had
+    zero authorization at all — anyone who knew a household_code could
+    trigger a real 'urgent, need you now' push to that family, claiming
+    to be any member. This is arguably the single most consequential
+    fix in this whole pass, given what a fake emergency alert could do."""
+    if s.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't send an SOS as another device")
     h = await _get_household(s.household_code)
+    if not any(m["device_id"] == s.device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
     sender = next((m for m in h["members"] if m["device_id"] == s.device_id), None)
     other_member = next((m for m in h["members"] if m["device_id"] != s.device_id), None)
     sender_name = sender.get("name") if sender else "She"
@@ -3301,7 +3930,9 @@ async def handoff_sos(s: SOSRequest):
 
 
 @api_router.post("/handoff/switch")
-async def handoff_switch(s: HandoffSwitch):
+async def handoff_switch(s: HandoffSwitch, verified_device_id: str = Depends(_verify_device)):
+    if s.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't switch duty as another device")
     h = await _get_household(s.household_code)
     if not any(m["device_id"] == s.device_id for m in h["members"]):
         raise HTTPException(status_code=400, detail="Not a member of this household")
@@ -3326,7 +3957,10 @@ async def handoff_switch(s: HandoffSwitch):
 
 
 @api_router.get("/handoff/history/{household_code}")
-async def handoff_history(household_code: str, limit: int = 20):
+async def handoff_history(household_code: str, limit: int = 20, verified_device_id: str = Depends(_verify_device)):
+    h = await _get_household(household_code)
+    if not any(m["device_id"] == verified_device_id for m in h["members"]):
+        raise HTTPException(status_code=403, detail="Not a member of this household")
     docs = await db.handoff_events.find(
         {"household_code": household_code}, {"_id": 0}
     ).sort("at", -1).to_list(limit)
@@ -3335,7 +3969,9 @@ async def handoff_history(household_code: str, limit: int = 20):
 
 # ----- Cultural spaces (opt-in) -----
 @api_router.get("/spaces/{device_id}")
-async def spaces_for(device_id: str):
+async def spaces_for(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's spaces")
     prof = await db.profiles.find_one({"device_id": device_id}, {"_id": 0}) or {}
     joined = prof.get("joined_spaces", [])
     counts = {}
@@ -3346,14 +3982,18 @@ async def spaces_for(device_id: str):
 
 
 @api_router.post("/spaces/join")
-async def join_space(a: SpaceAction):
+async def join_space(a: SpaceAction, verified_device_id: str = Depends(_verify_device)):
+    if a.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't join a space as another device")
     await db.profiles.update_one({"device_id": a.device_id},
                                  {"$addToSet": {"joined_spaces": a.space}}, upsert=True)
     return {"ok": True}
 
 
 @api_router.post("/spaces/leave")
-async def leave_space(a: SpaceAction):
+async def leave_space(a: SpaceAction, verified_device_id: str = Depends(_verify_device)):
+    if a.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't leave a space as another device")
     await db.profiles.update_one({"device_id": a.device_id},
                                  {"$pull": {"joined_spaces": a.space}})
     return {"ok": True}
@@ -3493,7 +4133,9 @@ async def shop_categories():
 
 
 @api_router.post("/shop/items")
-async def create_shop_item(item: ShopItemCreate):
+async def create_shop_item(item: ShopItemCreate, verified_device_id: str = Depends(_verify_device)):
+    if item.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't post a listing as another device")
     doc = item.model_dump()
     doc["created_at"] = now_iso()
     doc["claimed"] = False
@@ -3527,22 +4169,41 @@ async def get_shop_item(item_id: str):
 
 
 @api_router.patch("/shop/items/{item_id}/claim")
-async def claim_shop_item(item_id: str):
+async def claim_shop_item(item_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    # Previously had no device_id at all — anyone could mark any listing
+    # claimed. Now requires a real, verified caller, and only the
+    # original poster can mark their own listing claimed.
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    item = await db.shop_items.find_one({"_id": ObjectId(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    if item.get("device_id") != verified_device_id:
+        raise HTTPException(status_code=403, detail="Only the person who posted this can mark it claimed")
     await db.shop_items.update_one({"_id": ObjectId(item_id)}, {"$set": {"claimed": True}})
     return {"ok": True}
 
 
 @api_router.delete("/shop/items/{item_id}")
-async def delete_shop_item(item_id: str):
+async def delete_shop_item(item_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
+    item = await db.shop_items.find_one({"_id": ObjectId(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    if item.get("device_id") != verified_device_id:
+        raise HTTPException(status_code=403, detail="Only the person who posted this can delete it")
     await db.shop_items.delete_one({"_id": ObjectId(item_id)})
     return {"ok": True}
 
 
 @api_router.post("/shop/items/{item_id}/interest")
-async def express_interest(item_id: str, body: InterestCreate):
+async def express_interest(item_id: str, body: InterestCreate, verified_device_id: str = Depends(_verify_device)):
     """Starts (or resumes) a private thread between an interested caregiver
     and the person who posted the item. One thread per interested device
     per item, so repeated taps don't spawn duplicate conversations."""
+    if body.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't express interest as another device")
     device_id = body.device_id
     item = await db.shop_items.find_one({"_id": ObjectId(item_id)})
     if not item:
@@ -3568,7 +4229,9 @@ async def express_interest(item_id: str, body: InterestCreate):
 
 
 @api_router.get("/shop/threads/{device_id}")
-async def my_shop_threads(device_id: str):
+async def my_shop_threads(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's threads")
     docs = await db.shop_threads.find(
         {"$or": [{"poster_device_id": device_id}, {"interested_device_id": device_id}]}
     ).sort("created_at", -1).to_list(100)
@@ -3579,17 +4242,30 @@ async def my_shop_threads(device_id: str):
 
 
 @api_router.get("/shop/thread/{thread_id}")
-async def shop_thread_messages(thread_id: str):
+async def shop_thread_messages(thread_id: str, requesting_device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if requesting_device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Token doesn't match the requesting device")
     thread = await db.shop_threads.find_one({"_id": ObjectId(thread_id)})
     if not thread:
         raise HTTPException(status_code=404, detail="Not found")
+    # Same private-conversation principle as Group 3's chat fix — only the
+    # two actual participants in this negotiation can read it.
+    if verified_device_id not in (thread.get("poster_device_id"), thread.get("interested_device_id")):
+        raise HTTPException(status_code=403, detail="Not a participant in this thread")
     thread["id"] = str(thread.pop("_id"))
     msgs = await db.shop_thread_messages.find({"thread_id": thread_id}, {"_id": 0}).sort("created_at", 1).to_list(300)
     return {"thread": thread, "messages": msgs}
 
 
 @api_router.post("/shop/thread/{thread_id}")
-async def send_shop_message(thread_id: str, m: ShopMessageCreate):
+async def send_shop_message(thread_id: str, m: ShopMessageCreate, verified_device_id: str = Depends(_verify_device)):
+    if m.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't send a message as another device")
+    thread = await db.shop_threads.find_one({"_id": ObjectId(thread_id)})
+    if not thread:
+        raise HTTPException(status_code=404, detail="Not found")
+    if verified_device_id not in (thread.get("poster_device_id"), thread.get("interested_device_id")):
+        raise HTTPException(status_code=403, detail="Not a participant in this thread")
     await db.shop_thread_messages.insert_one({
         "thread_id": thread_id, "device_id": m.device_id, "text": m.text, "created_at": now_iso(),
     })
@@ -3634,7 +4310,10 @@ async def recovery_timeline(device_id: str):
 
 
 @api_router.post("/recovery/checkin")
-async def recovery_checkin(c: RecoveryCheckinCreate):
+async def recovery_checkin(c: RecoveryCheckinCreate, verified_device_id: str = Depends(_verify_device)):
+    if c.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     doc = c.model_dump()
     doc["created_at"] = now_iso()
     has_warning = len(c.symptoms) > 0
@@ -3671,13 +4350,19 @@ async def recovery_checkin(c: RecoveryCheckinCreate):
 
 
 @api_router.get("/recovery/checkins/{device_id}")
-async def recovery_checkins(device_id: str, limit: int = 30):
+async def recovery_checkins(device_id: str, limit: int = 30, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     docs = await db.recovery_checkins.find({"device_id": device_id}, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 
 @api_router.get("/recovery/today/{device_id}")
-async def recovery_today(device_id: str):
+async def recovery_today(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     today = datetime.now(timezone.utc).date().isoformat()
     doc = await db.recovery_checkins.find_one(
         {"device_id": device_id, "created_at": {"$regex": f"^{today}"}}, {"_id": 0})
@@ -3685,7 +4370,10 @@ async def recovery_today(device_id: str):
 
 
 @api_router.get("/recovery/{device_id}/report")
-async def recovery_report(device_id: str, days: int = 14):
+async def recovery_report(device_id: str, days: int = 14, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     """A plain-text summary of her recent recovery check-ins, meant to be
     shared directly with her provider — real dates and self-reported
     values only, never an interpretation or a diagnosis."""
@@ -3737,7 +4425,10 @@ async def recovery_report(device_id: str, days: int = 14):
 
 
 @api_router.post("/mom-wellness")
-async def mom_wellness_log(w: MomWellnessLogCreate):
+async def mom_wellness_log(w: MomWellnessLogCreate, verified_device_id: str = Depends(_verify_device)):
+    if w.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellness data")
+    
     """Water and medication logging, kept deliberately simple: a cup count
     and a name she chooses herself, not a drug database or calorie count."""
     doc = {
@@ -3752,7 +4443,10 @@ async def mom_wellness_log(w: MomWellnessLogCreate):
 
 
 @api_router.get("/mom-wellness/{device_id}/today")
-async def mom_wellness_today(device_id: str):
+async def mom_wellness_today(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellness data")
+    
     today = datetime.now(timezone.utc).date().isoformat()
     logs = await db.mom_wellness_logs.find(
         {"device_id": device_id, "at": {"$gte": today}}, {"_id": 0}
@@ -3763,7 +4457,10 @@ async def mom_wellness_today(device_id: str):
 
 
 @api_router.get("/mom-wellness/{device_id}/medication-names")
-async def mom_wellness_medication_names(device_id: str, days: int = 14):
+async def mom_wellness_medication_names(device_id: str, days: int = 14, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellness data")
+    
     """Her own regularly-used medication names, from her real recent
     history, so logging becomes a quick tap instead of retyping each time."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -3774,7 +4471,9 @@ async def mom_wellness_medication_names(device_id: str, days: int = 14):
 
 
 @api_router.get("/caregiver-rest/{device_id}/predictions")
-async def caregiver_rest_predictions(device_id: str):
+async def caregiver_rest_predictions(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
     """Her own sleep pattern prediction, personal to this specific
     caregiver, not combined across the household the way baby's logs are.
     Reuses the same real wake-window math already built and tested for
@@ -3785,7 +4484,9 @@ async def caregiver_rest_predictions(device_id: str):
 
 
 @api_router.patch("/profile/appointment")
-async def update_appointment(u: ProfileApptUpdate):
+async def update_appointment(u: ProfileApptUpdate, verified_device_id: str = Depends(_verify_device)):
+    if u.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's profile")
     await db.profiles.update_one(
         {"device_id": u.device_id},
         {"$set": {"postpartum_appt_done": u.postpartum_appt_done}},
@@ -4431,7 +5132,9 @@ def _week_start_iso(d: date) -> str:
 
 
 @api_router.get("/insights/weekly/{device_id}")
-async def weekly_insights(device_id: str, force: bool = False):
+async def weekly_insights(device_id: str, force: bool = False, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
     week_of = _week_start_iso(datetime.now(timezone.utc).date())
 
     if not force:
@@ -4739,7 +5442,9 @@ async def check_event_reminders(device_id: str):
 # now, gathered fresh each time it's opened rather than cached like weekly
 # insights — meant to be quick, not a report. -----
 @api_router.get("/catchup/{device_id}")
-async def catch_up(device_id: str):
+async def catch_up(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
     today = datetime.now(timezone.utc).date().isoformat()
     now = datetime.now(timezone.utc)
 
@@ -4801,7 +5506,10 @@ async def catch_up(device_id: str):
 # ----- Self wellbeing nudge — reminds HER directly, not just a Tag Team
 # partner, and works even without a household set up at all. -----
 @api_router.get("/wellbeing/self-check/{device_id}")
-async def wellbeing_self_check(device_id: str):
+async def wellbeing_self_check(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's wellbeing data")
+    
     now = datetime.now(timezone.utc)
     today = now.date().isoformat()
 
@@ -4842,13 +5550,113 @@ class ActivityPing(BaseModel):
 
 
 @api_router.post("/activity/ping")
-async def activity_ping(body: ActivityPing):
+async def activity_ping(body: ActivityPing, verified_device_id: str = Depends(_verify_device)):
+    if body.device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't ping activity as another device")
     """Called once when the app opens, so Cuddle actually knows whether
     she's been using it, separate from whether she's logged anything.
     This is the one thing inactivity_reminder below depends on."""
     await db.app_activity.update_one(
         {"device_id": body.device_id},
         {"$set": {"device_id": body.device_id, "last_opened_at": now_iso()}},
+        upsert=True,
+    )
+    return {"status": "ok"}
+
+
+# Real checkpoints in HER recovery, not baby's growth — deliberately the
+# same week boundaries used in the Recovery Timeline (0-2, 2-6, 6-12 weeks,
+# fourth trimester), so the two features stay consistent with each other
+# rather than inventing a second, different timeline.
+MOM_MILESTONES = [
+    {"week": 1, "title": "You made it through week one.",
+     "message": "The week nobody really prepares you for. However it went, however hard it was — you showed up for it. That counts."},
+    {"week": 2, "title": "Two weeks in.",
+     "message": "If you're exhausted, sore, and some days feel like a blur — that's not you failing, that's what week two actually looks like for almost everyone."},
+    {"week": 6, "title": "Six weeks.",
+     "message": "This is often treated like a finish line. It isn't — and if you don't feel 'back to normal,' you're not behind, you're exactly on time. Real healing keeps going well past this point."},
+    {"week": 12, "title": "Twelve weeks. The fourth trimester, done.",
+     "message": "Three months of a season that asked more of you than almost anything else. Energy, strength, and mood can keep improving for a long while yet — but this particular chapter, you got through."},
+    {"week": 26, "title": "Six months.",
+     "message": "Half a year of figuring it out as you went, because that's the only way anyone does this. Take a second to notice how far you've actually come, not just the baby."},
+    {"week": 52, "title": "One year.",
+     "message": "A full year of showing up, even on the days it was hard to. Whatever this year looked like for you, it was real, and you did it."},
+]
+
+
+async def mom_milestone_check(device_id: str) -> dict:
+    """Celebrates HER, not the baby — every other milestone feature in
+    this space (and every competitor's) tracks the baby's growth. This is
+    deliberately the opposite: a handful of real checkpoints in her own
+    recovery, each fired exactly once, tied to her actual delivery date."""
+    profile = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    if not profile or not profile.get("delivery_date"):
+        return {"nudged": False, "reason": "no delivery date on file"}
+
+    try:
+        delivered = datetime.fromisoformat(profile["delivery_date"].replace("Z", "+00:00"))
+    except ValueError:
+        return {"nudged": False, "reason": "invalid delivery date"}
+
+    weeks_out = (datetime.now(timezone.utc) - delivered).days // 7
+    milestone = next((m for m in MOM_MILESTONES if m["week"] == weeks_out), None)
+    if not milestone:
+        return {"nudged": False, "reason": "not a milestone week"}
+
+    already_sent = await db.mom_milestone_tracker.find_one(
+        {"device_id": device_id, "week": milestone["week"]}
+    )
+    if already_sent:
+        return {"nudged": False, "reason": "already celebrated this one"}
+
+    await send_push(device_id, f"Cuddle · {milestone['title']}", milestone["message"])
+    await db.mom_milestone_tracker.insert_one({
+        "device_id": device_id, "week": milestone["week"], "sent_at": now_iso(),
+    })
+    return {"nudged": True, "week": milestone["week"]}
+
+
+@api_router.get("/mom-milestone/pending/{device_id}")
+async def mom_milestone_pending(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
+    """For the in-app card — same milestone logic as the push notification,
+    but checked on demand when she opens the app, so it still shows even
+    if she has notifications off or the cron sweep hasn't run yet."""
+    profile = await db.profiles.find_one({"device_id": device_id}, {"_id": 0})
+    if not profile or not profile.get("delivery_date"):
+        return {"has_milestone": False}
+
+    try:
+        delivered = datetime.fromisoformat(profile["delivery_date"].replace("Z", "+00:00"))
+    except ValueError:
+        return {"has_milestone": False}
+
+    weeks_out = (datetime.now(timezone.utc) - delivered).days // 7
+    eligible = [m for m in MOM_MILESTONES if m["week"] <= weeks_out]
+    if not eligible:
+        return {"has_milestone": False}
+
+    seen_weeks = {
+        s["week"] async for s in db.mom_milestone_seen.find({"device_id": device_id}, {"_id": 0, "week": 1})
+    }
+    unseen = [m for m in eligible if m["week"] not in seen_weeks]
+    if not unseen:
+        return {"has_milestone": False}
+
+    # Most recent unseen one — if she skipped several app opens, show the
+    # latest checkpoint she's actually reached, not a backlog of old ones.
+    milestone = max(unseen, key=lambda m: m["week"])
+    return {"has_milestone": True, "week": milestone["week"], "title": milestone["title"], "message": milestone["message"]}
+
+
+@api_router.post("/mom-milestone/seen/{device_id}/{week}")
+async def mom_milestone_mark_seen(device_id: str, week: int, verified_device_id: str = Depends(_verify_device)):
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Not authorized for this device's data")
+    await db.mom_milestone_seen.update_one(
+        {"device_id": device_id, "week": week},
+        {"$set": {"device_id": device_id, "week": week, "seen_at": now_iso()}},
         upsert=True,
     )
     return {"status": "ok"}
@@ -4945,7 +5753,6 @@ async def proactive_ai_checkin(device_id: str) -> dict:
     return {"nudged": True, "signals": concern_signals}
 
 
-@api_router.get("/baby-log/{device_id}/predictive-nudge")
 async def predictive_feed_nudge(device_id: str):
     now = datetime.now(timezone.utc)
 
@@ -4976,7 +5783,6 @@ async def predictive_feed_nudge(device_id: str):
     return {"nudged": False}
 
 
-@api_router.get("/baby-log/{device_id}/predictive-sleep-nudge")
 async def predictive_sleep_nudge(device_id: str):
     """Same idea as the feed nudge, for naps: a heads-up shortly before baby
     is likely to wake, or likely to be ready to go down. Uses a separate
@@ -5045,7 +5851,6 @@ async def predictive_sleep_nudge(device_id: str):
     return {"nudged": False}
 
 
-@api_router.get("/baby-log/{device_id}/predictive-poop-nudge")
 async def predictive_poop_nudge(device_id: str):
     """Same pattern as the feed and sleep nudges. Worth being honest that
     poop timing is inherently less precise than feed or sleep (fewer
@@ -5078,6 +5883,33 @@ async def predictive_poop_nudge(device_id: str):
     return {"nudged": False}
 
 
+# The actual HTTP routes for the three predictive-nudge functions above —
+# kept separate from the internal functions themselves specifically so
+# the cron sweep's direct Python calls to those functions (see the checks
+# list a few hundred lines up) never pass through auth machinery that
+# only makes sense for a real external HTTP request. A route handler
+# calling straight into its own internal function, after checking auth
+# itself, isn't a bypass — it's the same pattern as every other
+# authorized endpoint in this file, just split into two functions because
+# this one has two legitimate callers with very different trust levels.
+@api_router.get("/baby-log/{device_id}/predictive-nudge")
+async def predictive_feed_nudge_route(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
+    return await predictive_feed_nudge(device_id)
+
+
+@api_router.get("/baby-log/{device_id}/predictive-sleep-nudge")
+async def predictive_sleep_nudge_route(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
+    return await predictive_sleep_nudge(device_id)
+
+
+@api_router.get("/baby-log/{device_id}/predictive-poop-nudge")
+async def predictive_poop_nudge_route(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    await _authorize_baby_data_access(device_id, verified_device_id)
+    return await predictive_poop_nudge(device_id)
+
+
 # ----- Account Deletion -----
 # Genuinely purges every collection that can contain this device's data —
 # built by walking the entire codebase collection by collection, not a
@@ -5094,7 +5926,13 @@ async def predictive_poop_nudge(device_id: str):
 #   - meal_slots: intentionally skipped — signups are by name/contact
 #     for a public, no-login page, not tied to a device_id.
 @api_router.delete("/account/{device_id}")
-async def delete_account(device_id: str):
+async def delete_account(device_id: str, verified_device_id: str = Depends(_verify_device)):
+    # This had zero authorization — anyone who knew a device_id could
+    # permanently delete that entire account with a single request. Given
+    # this is irreversible, it's arguably the single most severe finding
+    # in this whole pass.
+    if device_id != verified_device_id:
+        raise HTTPException(status_code=403, detail="Can't delete another device's account")
     deleted_counts: dict = {}
 
     # Peer chat rooms must be looked up BEFORE peer_rooms is deleted below,
@@ -5223,6 +6061,27 @@ async def on_startup():
         await db.meetups.create_index([("location", "2dsphere")])
     except Exception:
         logger.exception("failed to ensure meetups geospatial index")
+
+    # Real MongoDB TTL indexes — expired/used invitations and old rate-
+    # limit attempt logs clean themselves up automatically, rather than
+    # growing forever or needing a custom cleanup job.
+    try:
+        await db.invite_attempt_log.create_index("at", expireAfterSeconds=3600 * 2)
+        # Invitations expire well before this; this index is just the
+        # final cleanup so accepted/revoked/expired rows don't accumulate
+        # forever. 30 days past expiry is generous, never premature.
+        await db.household_invitations.create_index(
+            "expires_at", expireAfterSeconds=3600 * 24 * 30
+        )
+    except Exception:
+        logger.exception("failed to ensure invitation TTL indexes")
+
+    try:
+        # Checked (or stale, never-checked) ticket log rows clean
+        # themselves up automatically instead of growing forever.
+        await db.push_ticket_log.create_index("sent_at", expireAfterSeconds=3600 * 24 * 7)
+    except Exception:
+        logger.exception("failed to ensure push ticket log TTL index")
 
 
 @app.on_event("shutdown")
