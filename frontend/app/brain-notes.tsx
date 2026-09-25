@@ -68,7 +68,7 @@ export default function BrainNotes() {
           <Feather name="arrow-left" size={22} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Txt display style={{ fontSize: fontSize.xl }}>Baby Brain Capture</Txt>
+          <Txt display style={{ fontSize: fontSize.xl }}>Mama Brain Capture</Txt>
           <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>
             Jot it before it's gone — tap to check off later
           </Txt>

@@ -21,6 +21,7 @@ import { useProfile } from "@/src/lib/profile-context";
 import { isNightTime } from "@/src/lib/night";
 import { WhatsNewModal } from "@/src/components/WhatsNewModal";
 import { NotificationPermissionBanner } from "@/src/components/NotificationPermissionBanner";
+import { MomMilestoneCard } from "@/src/components/MomMilestoneCard";
 
 // A small set of original warm gradients — rotates together with the quote
 // so the whole card feels genuinely different each time, not just the text.
@@ -156,6 +157,7 @@ export default function Home() {
   return (
     <View style={{ flex: 1, backgroundColor: ambientTint }}>
       <WhatsNewModal />
+      <MomMilestoneCard deviceId={profile?.device_id ?? null} />
       {/* Sticky header */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <View>
@@ -362,7 +364,7 @@ export default function Home() {
             <Card style={styles.brainBanner}>
               <Feather name="feather" size={18} color={colors.brand} />
               <View style={{ flex: 1 }}>
-                <Txt weight="500">Baby Brain Capture</Txt>
+                <Txt weight="500">Mama Brain Capture</Txt>
                 <Txt style={{ color: colors.muted, fontSize: fontSize.sm }}>Jot it down before it's gone</Txt>
               </View>
               <Feather name="chevron-right" size={18} color={colors.muted} />

@@ -394,7 +394,7 @@ export const api = {
     req(`/dad-checkin`, { method: "POST", body: JSON.stringify(body) }),
   dadCheckinHistory: (deviceId: string) => req(`/dad-checkin/${deviceId}`),
 
-  // ----- Baby Brain Capture -----
+  // ----- Mama Brain Capture -----
   createBrainNote: (body: { device_id: string; text: string; category?: string }) =>
     authedReq(`/brain-notes`, { method: "POST", body: JSON.stringify(body) }),
   brainNotes: (deviceId: string, includeDone = false) =>

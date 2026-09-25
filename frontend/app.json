@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
-      "buildNumber": "35",
+      "buildNumber": "36",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support",
         "NSSpeechRecognitionUsageDescription": "Cuddle needs speech recognition to turn what you say into text for Talk to Cuddle.",
