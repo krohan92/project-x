@@ -2,7 +2,7 @@
   "expo": {
     "name": "Cuddle",
     "slug": "cuddle-postpartum",
-    "version": "1.0.10",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "cuddle",
@@ -11,12 +11,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cuddle.postpartum",
-      "buildNumber": "37",
+      "buildNumber": "40",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support",
-        "NSSpeechRecognitionUsageDescription": "Cuddle needs speech recognition to turn what you say into text for Talk to Cuddle.",
-        "NSMicrophoneUsageDescription": "Cuddle needs your microphone to hear what you say to Talk to Cuddle.",
-        "ITSAppUsesNonExemptEncryption": false
+        "NSLocationWhenInUseUsageDescription": "Show an anonymized pin so nearby awake moms can find support"
       }
     },
     "android": {
@@ -26,11 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.cuddle.postpartum",
-      "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "android.permission.RECORD_AUDIO"
-      ]
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "web": {
       "bundler": "metro",
@@ -47,23 +40,10 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
-      ],
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "Cuddle needs your microphone to hear what you say to Talk to Cuddle.",
-          "speechRecognitionPermission": "Cuddle needs speech recognition to turn what you say into text for Talk to Cuddle."
-        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "a41e462b-7569-4e74-a42d-4a095b805102"
-      }
     }
   }
 }
