@@ -16,10 +16,8 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ProfileProvider } from "@/src/lib/profile-context";
 import { LanguageProvider } from "@/src/lib/i18n";
 import { AmbientProvider } from "@/src/lib/ambient-context";
-import { registerSiriIntentHandlers } from "@/src/lib/siri-intents";
-import { registerForPushNotifications } from "@/src/lib/push-notifications";
-import { getDeviceId, api } from "@/src/lib/api";
 import { colors } from "@/src/theme/theme";
+import { refreshAffirmationSchedule } from "@/src/lib/daily-affirmation";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces";
 import { Quicksand_500Medium } from "@expo-google-fonts/quicksand";
 
@@ -49,38 +47,7 @@ export default function RootLayout() {
   }, [ready]);
 
   useEffect(() => {
-    // iOS-only — this package has no web or Android implementation at all
-    // (verified directly against its source), so calling it on any other
-    // platform would throw. Guarded here, and the handler itself has its
-    // own try/catch as a second layer of safety.
-    if (Platform.OS === "ios") {
-      try {
-        registerSiriIntentHandlers();
-      } catch (e) {
-        console.log("Siri intent registration failed:", e);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    // A simple heartbeat so the backend knows whether the app has actually
-    // been opened recently, separate from whether anything was logged —
-    // this is what the "haven't seen you in a while" reminder depends on.
-    // Also doubles as a safety net for push permission: this used to only
-    // ever be requested from inside the Tag Team card, so anyone who set
-    // up their profile before that was fixed in onboarding, or who never
-    // adds a household, was never asked at all. requestPermissionsAsync
-    // is safe to call repeatedly — it only shows the real OS prompt once,
-    // and is a no-op after that either way.
-    (async () => {
-      try {
-        const deviceId = await getDeviceId();
-        await api.activityPing(deviceId);
-        registerForPushNotifications(deviceId);
-      } catch (e) {
-        console.log("activity ping failed:", e);
-      }
-    })();
+    refreshAffirmationSchedule();
   }, []);
 
   if (!ready) return null;
