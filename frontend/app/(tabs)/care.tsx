@@ -12,6 +12,7 @@ import { api } from "@/src/lib/api";
 import { useProfile } from "@/src/lib/profile-context";
 import { useT } from "@/src/lib/i18n";
 import { storage } from "@/src/utils/storage";
+import { AffirmationCard } from "@/src/components/AffirmationCard";
 
 export default function Care() {
   const { tint: ambientTint } = useAmbient();
@@ -193,20 +194,6 @@ export default function Care() {
             <Feather name="chevron-right" size={20} color={colors.muted} />
           </Card>
         </Pressable>
-        <Pressable testID="care-pantry-scan" onPress={() => router.push("/pantry-scan")}>
-          <Card style={styles.rowCard}>
-            <View style={[styles.iconBubble, { backgroundColor: "#8A9A5B" + "40" }]}>
-              <Feather name="camera" size={20} color="#5F6B3E" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Txt weight="500" style={{ fontSize: fontSize.lg }}>Pantry Snap</Txt>
-              <Txt style={{ color: colors.onSurfaceTertiary, fontSize: fontSize.sm, marginTop: 2 }}>
-                Scan your pantry, get a matching recipe, order what's missing
-              </Txt>
-            </View>
-            <Feather name="chevron-right" size={20} color={colors.muted} />
-          </Card>
-        </Pressable>
         <Pressable testID="care-full-agenda" onPress={() => router.push("/cuddle-calendar")}>
           <Card style={styles.rowCard}>
             <View style={[styles.iconBubble, { backgroundColor: "#93B4D6" + "40" }]}>
@@ -342,6 +329,9 @@ export default function Care() {
             </Card>
           </Pressable>
         ))}
+
+        <Txt display style={styles.sectionTitle}>Reminders</Txt>
+        <AffirmationCard />
 
         {/* Your info */}
         {profile && (
